@@ -37,6 +37,22 @@ const ICONS = {
   signout:    <Ico d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />,
 };
 
+function ChevronLeft() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 19l-7-7 7-7" />
+    </svg>
+  );
+}
+
+function ChevronRight() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
 // ─── types ────────────────────────────────────────────────────────────────────
 
 type Counts = { requests: number; timesheets: number };
@@ -66,26 +82,30 @@ const WEBSITE_NAV: NavItemDef[] = [
 
 // ─── link component ──────────────────────────────────────────────────────────
 
-function SidebarLink({ href, label, icon, exact, badge, counts }: NavItemDef & { counts: Counts }) {
+function SidebarLink({ href, label, icon, exact, badge, counts, collapsed }: NavItemDef & { counts: Counts; collapsed: boolean }) {
   const pathname = usePathname();
   const active = exact ? pathname === href : pathname.startsWith(href);
   const count = badge ? counts[badge] : 0;
 
   return (
-    <Link href={href}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-        active
-          ? 'bg-brand text-white shadow-sm'
-          : 'text-white/55 hover:text-white hover:bg-white/8'
-      }`}>
+    <Link
+      href={href}
+      title={collapsed ? label : undefined}
+      className={`relative flex items-center rounded-xl text-sm font-medium transition-all ${
+        collapsed ? 'justify-center p-3' : 'gap-3 px-3 py-2.5'
+      } ${active ? 'bg-brand text-white shadow-sm' : 'text-white/55 hover:text-white hover:bg-white/8'}`}
+    >
       <span className={active ? 'opacity-100' : 'opacity-60'}>{icon}</span>
-      <span className="flex-1 leading-none">{label}</span>
-      {count > 0 && (
+      {!collapsed && <span className="flex-1 leading-none whitespace-nowrap">{label}</span>}
+      {!collapsed && count > 0 && (
         <span className={`text-[10px] font-bold min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full ${
           active ? 'bg-white/25 text-white' : 'bg-brand text-white'
         }`}>
           {count > 99 ? '99+' : count}
         </span>
+      )}
+      {collapsed && count > 0 && (
+        <span className="absolute top-1.5 right-1.5 w-[7px] h-[7px] rounded-full bg-brand ring-1 ring-ink" />
       )}
     </Link>
   );
@@ -114,10 +134,23 @@ function MobileLink({ href, label, exact, badge, counts }: NavItemDef & { counts
 
 export default function AdminNav() {
   const [counts, setCounts] = useState<Counts>({ requests: 0, timesheets: 0 });
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     fetchNavCounts().then(setCounts);
   }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('admin-nav-collapsed');
+    if (saved === 'true') setCollapsed(true);
+  }, []);
+
+  function toggle() {
+    setCollapsed(c => {
+      localStorage.setItem('admin-nav-collapsed', String(!c));
+      return !c;
+    });
+  }
 
   const allNav = [
     { href: '/dashboard', label: 'Overview', icon: ICONS.overview, exact: true },
@@ -128,64 +161,105 @@ export default function AdminNav() {
   return (
     <>
       {/* ── Desktop sidebar ── */}
-      <aside className="hidden md:flex flex-col w-60 shrink-0 bg-ink h-screen sticky top-0 overflow-y-auto">
-        {/* Brand */}
-        <div className="px-5 pt-6 pb-5">
+      <aside
+        className={`hidden md:flex flex-col shrink-0 bg-ink h-screen sticky top-0 overflow-x-hidden overflow-y-auto transition-[width] duration-200 ease-in-out ${
+          collapsed ? 'w-[60px]' : 'w-60'
+        }`}
+      >
+        {/* Brand + toggle */}
+        <div className={`flex items-center pt-6 pb-5 ${collapsed ? 'flex-col gap-2 px-0' : 'px-5 justify-between'}`}>
           <div className="flex items-center gap-2.5">
             <Image src="/images/itap-logo.png" alt="iTAP" width={30} height={30} className="shrink-0" />
-            <div>
-              <p className="text-white font-bold text-sm leading-tight tracking-tight">iTAP</p>
-              <p className="text-white/35 text-[10px] uppercase tracking-widest font-semibold leading-tight">Admin Panel</p>
-            </div>
+            {!collapsed && (
+              <div>
+                <p className="text-white font-bold text-sm leading-tight tracking-tight">iTAP</p>
+                <p className="text-white/35 text-[10px] uppercase tracking-widest font-semibold leading-tight">Admin Panel</p>
+              </div>
+            )}
           </div>
+          <button
+            onClick={toggle}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="w-6 h-6 flex items-center justify-center rounded-md text-white/30 hover:text-white hover:bg-white/8 transition-all shrink-0"
+          >
+            {collapsed ? <ChevronRight /> : <ChevronLeft />}
+          </button>
         </div>
 
         {/* Overview */}
-        <div className="px-3">
-          <SidebarLink href="/dashboard" label="Overview" icon={ICONS.overview} exact counts={counts} />
+        <div className="px-2">
+          <SidebarLink href="/dashboard" label="Overview" icon={ICONS.overview} exact counts={counts} collapsed={collapsed} />
         </div>
 
         {/* HR section */}
-        <div className="px-3 mt-5">
-          <p className="text-[10px] uppercase tracking-widest font-semibold text-white/25 px-3 mb-1.5">HR Management</p>
+        <div className="px-2 mt-5">
+          {!collapsed && <p className="text-[10px] uppercase tracking-widest font-semibold text-white/25 px-3 mb-1.5">HR Management</p>}
+          {collapsed && <div className="border-t border-white/10 mx-2 mb-2" />}
           <div className="space-y-0.5">
-            {HR_NAV.map(n => <SidebarLink key={n.href} {...n} counts={counts} />)}
+            {HR_NAV.map(n => <SidebarLink key={n.href} {...n} counts={counts} collapsed={collapsed} />)}
           </div>
         </div>
 
         {/* Website section */}
-        <div className="px-3 mt-5">
-          <p className="text-[10px] uppercase tracking-widest font-semibold text-white/25 px-3 mb-1.5">Website</p>
+        <div className="px-2 mt-5">
+          {!collapsed && <p className="text-[10px] uppercase tracking-widest font-semibold text-white/25 px-3 mb-1.5">Website</p>}
+          {collapsed && <div className="border-t border-white/10 mx-2 mb-2" />}
           <div className="space-y-0.5">
-            {WEBSITE_NAV.map(n => <SidebarLink key={n.href} {...n} counts={counts} />)}
+            {WEBSITE_NAV.map(n => <SidebarLink key={n.href} {...n} counts={counts} collapsed={collapsed} />)}
           </div>
         </div>
 
         {/* New posting button */}
-        <div className="px-3 mt-4">
-          <Link href="/dashboard/new"
-            className="flex items-center justify-center gap-1.5 w-full py-2 bg-white/8 hover:bg-white/12 text-white/70 hover:text-white text-xs font-semibold rounded-xl border border-white/8 transition-all">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-              <path d="M6 1v10M1 6h10"/>
-            </svg>
-            New Job Posting
-          </Link>
-        </div>
+        {!collapsed && (
+          <div className="px-3 mt-4">
+            <Link href="/dashboard/new"
+              className="flex items-center justify-center gap-1.5 w-full py-2 bg-white/8 hover:bg-white/12 text-white/70 hover:text-white text-xs font-semibold rounded-xl border border-white/8 transition-all">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                <path d="M6 1v10M1 6h10"/>
+              </svg>
+              New Job Posting
+            </Link>
+          </div>
+        )}
+        {collapsed && (
+          <div className="px-2 mt-4">
+            <Link href="/dashboard/new" title="New Job Posting"
+              className="flex items-center justify-center p-3 rounded-xl text-white/45 hover:text-white hover:bg-white/8 transition-all">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                <path d="M6 1v10M1 6h10"/>
+              </svg>
+            </Link>
+          </div>
+        )}
 
         {/* Spacer */}
         <div className="flex-1" />
 
         {/* Footer */}
-        <div className="px-3 py-4 border-t border-white/8 space-y-0.5">
-          <Link href="/portal"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/45 hover:text-white hover:bg-white/8 transition-all">
-            <span className="opacity-60">{ICONS.portal}</span>
-            Employee Portal
-          </Link>
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/45 hover:text-white hover:bg-white/8 transition-all">
-            <span className="opacity-60">{ICONS.signout}</span>
-            <SignOutButton className="text-inherit" />
-          </div>
+        <div className={`px-2 py-4 border-t border-white/8 space-y-0.5`}>
+          {!collapsed ? (
+            <>
+              <Link href="/portal"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/45 hover:text-white hover:bg-white/8 transition-all">
+                <span className="opacity-60 shrink-0">{ICONS.portal}</span>
+                <span className="whitespace-nowrap">Employee Portal</span>
+              </Link>
+              <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-white/45 hover:text-white hover:bg-white/8 transition-all">
+                <span className="opacity-60 shrink-0">{ICONS.signout}</span>
+                <SignOutButton className="text-inherit whitespace-nowrap" />
+              </div>
+            </>
+          ) : (
+            <>
+              <Link href="/portal" title="Employee Portal"
+                className="flex items-center justify-center p-3 rounded-xl text-white/45 hover:text-white hover:bg-white/8 transition-all">
+                <span className="opacity-60">{ICONS.portal}</span>
+              </Link>
+              <div className="flex items-center justify-center p-3 rounded-xl text-white/45 hover:text-white hover:bg-white/8 transition-all">
+                <span className="opacity-60">{ICONS.signout}</span>
+              </div>
+            </>
+          )}
         </div>
       </aside>
 

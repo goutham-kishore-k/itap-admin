@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Image from 'next/image';
 import { getPortalEmployee } from '@/lib/portal-user';
 import PortalNav from '@/components/PortalNav';
+import RouteProgress from '@/components/RouteProgress';
 
 export default async function PortalLayout({ children }: { children: React.ReactNode }) {
   const employee = await getPortalEmployee();
@@ -26,6 +27,7 @@ export default async function PortalLayout({ children }: { children: React.React
 
   return (
     <div className="bg-gray-50 md:flex md:h-screen md:overflow-hidden">
+      <RouteProgress />
       <PortalNav employeeName={employee.full_name} role={employee.role} />
       <main className="flex-1 min-w-0 md:overflow-y-auto">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 md:py-8">

@@ -142,8 +142,23 @@ export default function TeamRequestsPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
+        <div className="space-y-2 animate-pulse">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-full bg-gray-100 shrink-0" />
+                <div className="space-y-1.5">
+                  <div className="h-4 w-40 bg-gray-200 rounded" />
+                  <div className="h-3 w-24 bg-gray-100 rounded" />
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="h-6 w-16 bg-gray-100 rounded-full" />
+                <div className="h-8 w-20 bg-gray-100 rounded-lg" />
+                <div className="h-8 w-20 bg-gray-100 rounded-lg" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : requests.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import AdminNav from '@/components/AdminNav';
+import RouteProgress from '@/components/RouteProgress';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -37,6 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="bg-gray-50 md:flex md:h-screen md:overflow-hidden">
+      <RouteProgress />
       <AdminNav />
       <main className="flex-1 min-w-0 md:overflow-y-auto">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 md:py-8">

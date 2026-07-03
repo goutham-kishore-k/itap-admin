@@ -349,8 +349,15 @@ export default function TimesheetPage() {
       )}
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
+        <div className="space-y-3 animate-pulse">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <div className="px-4 py-3 flex items-center justify-between bg-gray-50">
+                <div className="h-4 w-28 bg-gray-200 rounded" />
+                <div className="h-4 w-8 bg-gray-100 rounded" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-3">
