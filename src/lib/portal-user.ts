@@ -8,7 +8,7 @@ export const getPortalEmployee = cache(async () => {
   if (!user) return null;
   const { data } = await supabase
     .from('employees')
-    .select('id, full_name, role, designation, departments(name)')
+    .select('id, full_name, role, designation, manager_id, departments(name)')
     .eq('user_id', user.id)
     .maybeSingle();
   return data ?? null;

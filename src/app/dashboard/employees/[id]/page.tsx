@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import type { Employee, Department } from '@/types';
-import { updateEmployee } from '../actions';
+import { updateEmployee, deleteEmployee } from '../actions';
 
 export default function EditEmployeePage() {
   const { id } = useParams<{ id: string }>();
@@ -15,6 +15,9 @@ export default function EditEmployeePage() {
   const [managers, setManagers] = useState<{ id: string; full_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showDelete, setShowDelete] = useState(false);
+  const [confirmName, setConfirmName] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -30,6 +33,17 @@ export default function EditEmployeePage() {
       setLoading(false);
     });
   }, [id, router]);
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await deleteEmployee(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
+      setDeleting(false);
+      setShowDelete(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -112,8 +126,61 @@ export default function EditEmployeePage() {
         <div className="flex gap-3 pb-4 flex-wrap">
           <button type="submit" className="px-6 py-2.5 bg-brand text-white font-semibold rounded-full text-sm hover:bg-brand-dark transition-colors">Save Changes</button>
           <Link href="/dashboard/employees" className="px-6 py-2.5 bg-white border border-gray-200 text-gray-600 font-semibold rounded-full text-sm hover:border-gray-300 transition-colors">Cancel</Link>
+          <button type="button" onClick={() => { setShowDelete(true); setConfirmName(''); }}
+            className="ml-auto px-6 py-2.5 bg-white border border-red-200 text-red-600 font-semibold rounded-full text-sm hover:bg-red-50 hover:border-red-300 transition-colors">
+            Delete Employee
+          </button>
         </div>
       </form>
+
+      {/* Delete confirmation modal */}
+      {showDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-sm">Delete employee permanently?</h3>
+                <p className="text-xs text-gray-400 mt-0.5">This cannot be undone.</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600">
+              All timesheets, attendance, and requests for <strong>{employee?.full_name}</strong> will be deleted.
+              Their login will be revoked immediately.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                Type <span className="text-gray-900 font-bold">{employee?.full_name}</span> to confirm
+              </label>
+              <input
+                value={confirmName}
+                onChange={e => setConfirmName(e.target.value)}
+                className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-colors"
+                placeholder={employee?.full_name}
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={handleDelete}
+                disabled={confirmName !== employee?.full_name || deleting}
+                className="flex-1 py-2.5 bg-red-600 text-white font-semibold rounded-full text-sm hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                {deleting ? 'Deleting…' : 'Delete permanently'}
+              </button>
+              <button
+                onClick={() => setShowDelete(false)}
+                disabled={deleting}
+                className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-600 font-semibold rounded-full text-sm hover:border-gray-300 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

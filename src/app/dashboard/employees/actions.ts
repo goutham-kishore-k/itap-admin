@@ -79,6 +79,26 @@ export async function updateEmployee(id: string, formData: FormData) {
   redirect('/dashboard/employees');
 }
 
+export async function deleteEmployee(id: string) {
+  const admin = createAdminClient();
+
+  // Fetch the employee to get their auth user id
+  const { data: emp, error: fetchErr } = await admin.from('employees')
+    .select('user_id').eq('id', id).single();
+  if (fetchErr) throw new Error(fetchErr.message);
+
+  // Delete the employee row (related rows cascade via DB foreign keys)
+  const { error: delErr } = await admin.from('employees').delete().eq('id', id);
+  if (delErr) throw new Error(delErr.message);
+
+  // Delete the auth user so they can no longer log in
+  if (emp?.user_id) {
+    await admin.auth.admin.deleteUser(emp.user_id);
+  }
+
+  redirect('/dashboard/employees');
+}
+
 export async function setTempPassword(userId: string, password: string) {
   if (!password || password.length < 6) {
     throw new Error('Password must be at least 6 characters.');

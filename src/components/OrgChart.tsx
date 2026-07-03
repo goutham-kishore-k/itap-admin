@@ -23,10 +23,13 @@ function buildTree(employees: (Employee & { dept_name?: string })[]) {
   return roots;
 }
 
-const ROLE_COLOR: Record<string, string> = {
-  hr_admin: 'bg-brand text-white shadow-brand/20',
-  manager:  'bg-ink text-white shadow-ink/20',
-  employee: 'bg-white text-gray-900 border border-gray-200',
+const ROLE_BADGE: Record<string, string> = {
+  hr_admin: 'bg-brand/10 text-brand',
+  manager:  'bg-ink/10 text-ink',
+};
+const ROLE_LABEL: Record<string, string> = {
+  hr_admin: 'HR Admin',
+  manager:  'Manager',
 };
 
 type Highlight = 'self' | 'manager' | 'teammate' | null;
@@ -39,7 +42,7 @@ function NodeCard({
   currentEmpId?: string;
   currentManagerId?: string;
 }) {
-  const [expanded, setExpanded] = useState(depth < 2);
+  const [expanded, setExpanded] = useState(depth < 3);
   const hasChildren = node.children.length > 0;
 
   const highlight: Highlight =
@@ -49,31 +52,38 @@ function NodeCard({
                                        ? 'teammate' : null;
 
   const ringClass =
-    highlight === 'self'     ? 'ring-2 ring-brand ring-offset-2'     :
-    highlight === 'manager'  ? 'ring-2 ring-violet-500 ring-offset-2' :
-    highlight === 'teammate' ? 'ring-2 ring-amber-400 ring-offset-2'  : '';
+    highlight === 'self'     ? 'ring-2 ring-brand ring-offset-2'      :
+    highlight === 'manager'  ? 'ring-2 ring-violet-500 ring-offset-2'  :
+    highlight === 'teammate' ? 'ring-2 ring-amber-400 ring-offset-2'   : '';
 
-  const badge =
-    highlight === 'self'     ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-brand text-white px-2 py-0.5 rounded-full">You</span>          :
+  const relBadge =
+    highlight === 'self'     ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-brand text-white px-2 py-0.5 rounded-full">You</span>           :
     highlight === 'manager'  ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-violet-500 text-white px-2 py-0.5 rounded-full">Your Manager</span> :
-    highlight === 'teammate' ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-amber-400 text-white px-2 py-0.5 rounded-full">Teammate</span>     :
+    highlight === 'teammate' ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-amber-400 text-white px-2 py-0.5 rounded-full">Teammate</span>      :
     null;
+
+  const roleBadge = ROLE_LABEL[node.role] ? (
+    <span className={`mt-1 inline-block text-[9px] font-bold tracking-widest uppercase px-2 py-0.5 rounded-full ${ROLE_BADGE[node.role]}`}>
+      {ROLE_LABEL[node.role]}
+    </span>
+  ) : null;
 
   return (
     <div className="flex flex-col items-center">
       {/* Card */}
       <div
-        className={`px-4 py-3 rounded-2xl shadow-sm min-w-[150px] max-w-[200px] text-center select-none transition-all ${ROLE_COLOR[node.role] ?? ROLE_COLOR.employee} ${ringClass}`}
+        className={`bg-white border border-gray-200 px-4 py-3 rounded-2xl shadow-sm min-w-[150px] max-w-[200px] text-center select-none transition-all ${ringClass}`}
         title={node.email ?? undefined}
       >
-        <p className="text-sm font-bold leading-snug">{node.full_name}</p>
+        <p className="text-sm font-bold leading-snug text-gray-900">{node.full_name}</p>
         {node.designation && (
-          <p className="text-[11px] opacity-70 mt-0.5 leading-tight">{node.designation}</p>
+          <p className="text-[11px] text-gray-500 mt-0.5 leading-tight">{node.designation}</p>
         )}
         {node.dept_name && (
-          <p className="text-[10px] opacity-40 mt-0.5">{node.dept_name}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">{node.dept_name}</p>
         )}
-        {badge}
+        {roleBadge}
+        {relBadge}
       </div>
 
       {/* Expand/collapse toggle + children */}

@@ -44,32 +44,86 @@ function StatCard({
   );
 }
 
+function getWeekBounds(dateStr: string): { start: string; end: string; label: string } {
+  const d = new Date(dateStr + 'T12:00:00');
+  const dow = (d.getDay() + 6) % 7; // Mon=0 … Sun=6
+  const mon = new Date(d);
+  mon.setDate(d.getDate() - dow);
+  const sun = new Date(mon);
+  sun.setDate(mon.getDate() + 6);
+  const fmt = (x: Date) => x.toISOString().split('T')[0];
+  const label =
+    mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+    ' – ' +
+    sun.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return { start: fmt(mon), end: fmt(sun), label };
+}
+
 export default async function DashboardPage() {
   const admin = createAdminClient();
 
   const [
     { count: empCount },
-    { count: pendingTimesheets },
+    { data: pendingEntries },
     { count: pendingRequests },
     { count: activeJobs },
-    { data: recentTimesheets },
     { data: recentRequests },
   ] = await Promise.all([
     admin.from('employees').select('id', { count: 'exact', head: true }).eq('is_active', true),
-    admin.from('timesheet_entries').select('id', { count: 'exact', head: true }).eq('status', 'submitted'),
+    admin.from('timesheet_entries')
+      .select('employee_id, date, hours, employees!employee_id(full_name)')
+      .eq('status', 'submitted')
+      .order('date', { ascending: false }),
     admin.from('hr_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     admin.from('career_positions').select('id', { count: 'exact', head: true }).eq('is_active', true),
-    admin.from('timesheet_entries')
-      .select('id, date, project, hours, employees!employee_id(full_name)')
-      .eq('status', 'submitted')
-      .order('created_at', { ascending: false })
-      .limit(6),
     admin.from('hr_requests')
       .select('id, type, title, created_at, employees!employee_id(full_name)')
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(6),
   ]);
+
+  // ── Group submitted entries by (employee × week) ──────────────────────────
+  type PersonWeek = {
+    empId: string; name: string;
+    weekStart: string; weekLabel: string;
+    totalHours: number; entryCount: number;
+  };
+  const groupMap = new Map<string, PersonWeek>();
+
+  for (const e of pendingEntries ?? []) {
+    const emp = e.employees as unknown as { full_name: string } | null;
+    const { start, label } = getWeekBounds(e.date);
+    const key = `${e.employee_id}::${start}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        empId: e.employee_id, name: emp?.full_name ?? '—',
+        weekStart: start, weekLabel: label,
+        totalHours: 0, entryCount: 0,
+      });
+    }
+    const g = groupMap.get(key)!;
+    g.totalHours += Number(e.hours);
+    g.entryCount++;
+  }
+
+  // Sort: newest week first, then alphabetically by name
+  const allGroups = Array.from(groupMap.values())
+    .sort((a, b) => b.weekStart.localeCompare(a.weekStart) || a.name.localeCompare(b.name));
+
+  // Roll up into week buckets for display (cap at 3 weeks)
+  const weekBuckets: { weekStart: string; weekLabel: string; people: PersonWeek[] }[] = [];
+  for (const g of allGroups) {
+    const last = weekBuckets[weekBuckets.length - 1];
+    if (!last || last.weekStart !== g.weekStart) {
+      if (weekBuckets.length === 3) break;
+      weekBuckets.push({ weekStart: g.weekStart, weekLabel: g.weekLabel, people: [g] });
+    } else {
+      last.people.push(g);
+    }
+  }
+
+  const pendingEmpCount = new Set(allGroups.map(g => g.empId)).size;
 
   function relativeTime(iso: string) {
     const diff = Date.now() - new Date(iso).getTime();
@@ -101,8 +155,8 @@ export default async function DashboardPage() {
         />
         <StatCard
           label="Pending Timesheets"
-          value={pendingTimesheets ?? 0}
-          sub="Awaiting review"
+          value={pendingEmpCount}
+          sub={pendingEmpCount === 1 ? 'employee awaiting review' : 'employees awaiting review'}
           href="/dashboard/timesheets"
           color="blue"
         />
@@ -125,39 +179,54 @@ export default async function DashboardPage() {
       {/* Recent activity */}
       <div className="grid md:grid-cols-2 gap-4">
 
-        {/* Recent timesheets */}
+        {/* Submitted timesheets — by person, grouped by week */}
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
           <div className="px-5 py-4 flex items-center justify-between border-b border-gray-50">
             <div>
               <h2 className="text-sm font-bold text-gray-900">Submitted Timesheets</h2>
               <p className="text-xs text-gray-400 mt-0.5">Pending your review</p>
             </div>
-            {(pendingTimesheets ?? 0) > 0 && (
+            {pendingEmpCount > 0 && (
               <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
-                {pendingTimesheets}
+                {pendingEmpCount} {pendingEmpCount === 1 ? 'person' : 'people'}
               </span>
             )}
           </div>
 
-          {!recentTimesheets?.length ? (
+          {weekBuckets.length === 0 ? (
             <div className="px-5 py-10 text-center text-xs text-gray-400">No pending timesheets</div>
           ) : (
-            <div className="divide-y divide-gray-50">
-              {recentTimesheets.map((e) => {
-                const emp = e.employees as unknown as { full_name: string } | null;
-                return (
-                  <div key={e.id} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900 truncate">{emp?.full_name ?? '—'}</p>
-                      <p className="text-xs text-gray-400 mt-0.5 truncate">{e.project}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-sm font-bold text-gray-900">{e.hours}h</p>
-                      <p className="text-xs text-gray-400">{new Date(e.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
-                    </div>
+            <div>
+              {weekBuckets.map(wk => (
+                <div key={wk.weekStart}>
+                  {/* Week header */}
+                  <div className="px-5 py-2 bg-gray-50/70 border-b border-gray-50 flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                      Week of {wk.weekLabel}
+                    </p>
+                    <span className="text-[11px] text-gray-400">
+                      {wk.people.length} {wk.people.length === 1 ? 'person' : 'people'}
+                    </span>
                   </div>
-                );
-              })}
+                  {/* People rows */}
+                  <div className="divide-y divide-gray-50">
+                    {wk.people.map(p => (
+                      <div key={p.empId} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
+                            {p.name.charAt(0).toUpperCase()}
+                          </div>
+                          <p className="text-sm font-semibold text-gray-900 truncate">{p.name}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-bold text-gray-900">{p.totalHours.toFixed(1)}h</p>
+                          <p className="text-[11px] text-gray-400">{p.entryCount} {p.entryCount === 1 ? 'entry' : 'entries'}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

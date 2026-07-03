@@ -45,8 +45,11 @@ export default function TimesheetPage() {
   const [projects, setProjects]   = useState<ProjectOption[]>([]);
   const [adding, setAdding]       = useState<string | null>(null);
   const [form, setForm]           = useState<AddForm>({ project_id: '', hours: '', notes: '' });
+  const [editing, setEditing]     = useState<string | null>(null); // entry id being edited
+  const [editForm, setEditForm]   = useState<AddForm>({ project_id: '', hours: '', notes: '' });
   const [saving, setSaving]       = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [recalling, setRecalling]   = useState(false);
   const [reopening, setReopening] = useState(false);
   const [error, setError]         = useState('');
 
@@ -115,6 +118,35 @@ export default function TimesheetPage() {
     load();
   }
 
+  function startEdit(entry: TimesheetEntry) {
+    const proj = projects.find(p => p.name === entry.project);
+    setEditForm({
+      project_id: proj?.id ?? '',
+      hours: String(entry.hours),
+      notes: entry.notes ?? '',
+    });
+    setEditing(entry.id);
+  }
+
+  async function saveEdit(id: string) {
+    if (!editForm.project_id) { setError('Please select a project'); return; }
+    const hours = parseFloat(editForm.hours);
+    if (isNaN(hours) || hours <= 0 || hours > 24) { setError('Hours must be between 0 and 24'); return; }
+    setError('');
+    setSaving(true);
+    const selectedProject = projects.find(p => p.id === editForm.project_id);
+    const supabase = createClient();
+    await supabase.from('timesheet_entries').update({
+      project_id: editForm.project_id,
+      project:    selectedProject?.name ?? '',
+      hours,
+      notes:      editForm.notes.trim() || null,
+    }).eq('id', id).eq('status', 'draft');
+    setSaving(false);
+    setEditing(null);
+    load();
+  }
+
   async function submitWeek() {
     const draftIds = entries.filter(e => e.status === 'draft').map(e => e.id);
     if (!draftIds.length) return;
@@ -122,6 +154,16 @@ export default function TimesheetPage() {
     const supabase = createClient();
     await supabase.from('timesheet_entries').update({ status: 'submitted' }).in('id', draftIds);
     setSubmitting(false);
+    load();
+  }
+
+  async function recallWeek() {
+    const submittedIds = entries.filter(e => e.status === 'submitted').map(e => e.id);
+    if (!submittedIds.length) return;
+    setRecalling(true);
+    const supabase = createClient();
+    await supabase.from('timesheet_entries').update({ status: 'draft' }).in('id', submittedIds);
+    setRecalling(false);
     load();
   }
 
@@ -218,6 +260,9 @@ export default function TimesheetPage() {
                 <p className="text-xs text-blue-600 mt-0.5">Your manager will review your entries.</p>
               </>
             )}
+            {status === 'mixed' && entries.some(e => e.status === 'submitted') && !entries.some(e => e.status === 'approved') && (
+              <p className="text-sm font-semibold text-gray-700">Some entries submitted — awaiting approval</p>
+            )}
             {status === 'rejected' && (
               <>
                 <p className="text-sm font-semibold text-red-800">Some entries were rejected</p>
@@ -243,6 +288,12 @@ export default function TimesheetPage() {
               <p className="text-sm font-semibold text-gray-700">Week has mixed statuses</p>
             )}
           </div>
+          {(status === 'all_submitted' || (status === 'mixed' && entries.some(e => e.status === 'submitted') && !entries.some(e => e.status === 'approved'))) && (
+            <button onClick={recallWeek} disabled={recalling}
+              className="px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-full hover:bg-blue-700 disabled:opacity-60 transition-colors shrink-0">
+              {recalling ? 'Recalling…' : 'Recall submission'}
+            </button>
+          )}
           {status === 'rejected' && (
             <button onClick={reopenRejected} disabled={reopening}
               className="px-4 py-2 bg-red-600 text-white text-xs font-semibold rounded-full hover:bg-red-700 disabled:opacity-60 transition-colors shrink-0">
@@ -335,27 +386,72 @@ export default function TimesheetPage() {
                 {dayEntries.length > 0 && (
                   <div className="divide-y divide-gray-50">
                     {dayEntries.map(entry => (
-                      <div key={entry.id} className={`px-4 py-2.5 flex items-start gap-3 ${
-                        entry.status === 'rejected' ? 'bg-red-50/40' : ''
-                      }`}>
-                        <div className="flex-1 min-w-0 pt-0.5">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium text-gray-900">{entry.project}</span>
-                            {entry.notes && <span className="text-xs text-gray-400">{entry.notes}</span>}
+                      <div key={entry.id}>
+                        {editing === entry.id ? (
+                          <div className="px-4 py-3 bg-brand/5 border-t border-brand/10 space-y-2">
+                            {error && <p className="text-xs text-red-600">{error}</p>}
+                            <div className="flex gap-2 flex-wrap">
+                              <select
+                                value={editForm.project_id}
+                                onChange={e => setEditForm(f => ({ ...f, project_id: e.target.value }))}
+                                className="flex-1 min-w-[160px] px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-brand bg-white">
+                                <option value="">Select project…</option>
+                                {projects.map(p => (
+                                  <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ''}</option>
+                                ))}
+                              </select>
+                              <input
+                                value={editForm.hours}
+                                onChange={e => setEditForm(f => ({ ...f, hours: e.target.value }))}
+                                placeholder="Hours" type="number" min="0.5" max="24" step="0.5"
+                                className="w-20 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-brand" />
+                              <input
+                                value={editForm.notes}
+                                onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                                placeholder="Notes (optional)"
+                                className="flex-1 min-w-[120px] px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-brand" />
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <button onClick={() => { setEditing(null); setError(''); }}
+                                className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors">
+                                Cancel
+                              </button>
+                              <button onClick={() => saveEdit(entry.id)} disabled={saving}
+                                className="px-4 py-1.5 bg-brand text-white text-xs font-semibold rounded-lg hover:bg-brand-dark disabled:opacity-60 transition-colors">
+                                {saving ? 'Saving…' : 'Save'}
+                              </button>
+                            </div>
                           </div>
-                          {entry.status === 'rejected' && entry.rejection_reason && (
-                            <p className="text-xs text-red-600 font-medium mt-0.5">
-                              Rejection reason: {entry.rejection_reason}
-                            </p>
-                          )}
-                        </div>
-                        <span className="text-sm font-semibold text-gray-700 shrink-0">{entry.hours}h</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize shrink-0 ${STATUS_STYLE[entry.status]}`}>
-                          {entry.status}
-                        </span>
-                        {entry.status === 'draft' && (
-                          <button onClick={() => deleteEntry(entry.id)}
-                            className="text-gray-300 hover:text-red-400 transition-colors text-sm shrink-0">×</button>
+                        ) : (
+                          <div className={`px-4 py-2.5 flex items-start gap-3 ${
+                            entry.status === 'rejected' ? 'bg-red-50/40' : ''
+                          }`}>
+                            <div className="flex-1 min-w-0 pt-0.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium text-gray-900">{entry.project}</span>
+                                {entry.notes && <span className="text-xs text-gray-400">{entry.notes}</span>}
+                              </div>
+                              {entry.status === 'rejected' && entry.rejection_reason && (
+                                <p className="text-xs text-red-600 font-medium mt-0.5">
+                                  Rejection reason: {entry.rejection_reason}
+                                </p>
+                              )}
+                            </div>
+                            <span className="text-sm font-semibold text-gray-700 shrink-0">{entry.hours}h</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize shrink-0 ${STATUS_STYLE[entry.status]}`}>
+                              {entry.status}
+                            </span>
+                            {entry.status === 'draft' && (
+                              <>
+                                <button onClick={() => { startEdit(entry); setAdding(null); setError(''); }}
+                                  className="text-gray-300 hover:text-brand transition-colors text-xs font-semibold shrink-0">
+                                  Edit
+                                </button>
+                                <button onClick={() => deleteEntry(entry.id)}
+                                  className="text-gray-300 hover:text-red-400 transition-colors text-sm shrink-0">×</button>
+                              </>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}
