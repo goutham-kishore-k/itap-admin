@@ -54,7 +54,7 @@ export default function ProfilePage() {
     setEditing(false);
   }
 
-  const dept = (employee?.departments as { name: string } | null)?.name;
+  const dept = (employee?.departments as unknown as { name: string } | null)?.name;
   const manager = (employee?.manager as { id: string; full_name: string } | null);
 
   const ROLE_LABEL: Record<string, string> = { employee: 'Employee', manager: 'Manager', hr_admin: 'HR Admin' };

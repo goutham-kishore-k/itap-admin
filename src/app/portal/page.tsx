@@ -46,7 +46,7 @@ export default async function PortalHomePage() {
   ]);
 
   const weekHours = (timesheets ?? []).reduce((s, e) => s + Number(e.hours), 0);
-  const dept      = (employee.departments as { name: string } | null)?.name;
+  const dept      = (employee.departments as unknown as { name: string } | null)?.name;
 
   return (
     <div className="space-y-6">

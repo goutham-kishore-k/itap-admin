@@ -15,7 +15,7 @@ export default async function AdminOrgPage() {
     ...e,
     department_id: e.department_id ?? null,
     manager_id: e.manager_id ?? null,
-    dept_name: (e.departments as { name: string } | null)?.name,
+    dept_name: (e.departments as unknown as { name: string } | null)?.name,
   }));
 
   const noManager = mapped.filter(e => !e.manager_id);

@@ -64,7 +64,7 @@ export default async function EmployeesPage() {
                   </td>
                   <td className="px-5 py-3.5 hidden sm:table-cell text-gray-600">{emp.designation ?? '—'}</td>
                   <td className="px-5 py-3.5 hidden md:table-cell text-gray-600">
-                    {(emp.departments as { name: string } | null)?.name ?? '—'}
+                    {(emp.departments as unknown as { name: string } | null)?.name ?? '—'}
                   </td>
                   <td className="px-5 py-3.5 hidden lg:table-cell text-gray-600">
                     {(emp.manager as { id: string; full_name: string } | null)?.full_name ?? '—'}
