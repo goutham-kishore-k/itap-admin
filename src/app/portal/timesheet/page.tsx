@@ -167,7 +167,6 @@ export default function TimesheetPage() {
       return {
         employee_id: employeeId,
         date:        newDate,
-        project_id:  e.project_id ?? null,
         project:     e.project,
         hours:       e.hours,
         notes:       e.notes ?? null,
