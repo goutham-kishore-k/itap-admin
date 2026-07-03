@@ -144,7 +144,7 @@ export default async function DashboardPage() {
           ) : (
             <div className="divide-y divide-gray-50">
               {recentTimesheets.map((e) => {
-                const emp = e.employees as { full_name: string } | null;
+                const emp = e.employees as unknown as { full_name: string } | null;
                 return (
                   <div key={e.id} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
                     <div className="min-w-0">
@@ -188,7 +188,7 @@ export default async function DashboardPage() {
           ) : (
             <div className="divide-y divide-gray-50">
               {recentRequests.map((r) => {
-                const emp = r.employees as { full_name: string } | null;
+                const emp = r.employees as unknown as { full_name: string } | null;
                 return (
                   <div key={r.id} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
                     <div className="min-w-0">

@@ -72,7 +72,7 @@ export default function TeamTimesheetsPage() {
     const { data } = await q;
     const map = new Map<string, EmpGroup>();
     (data ?? []).forEach(e => {
-      const emp = e.employees as { id: string; full_name: string } | null;
+      const emp = e.employees as unknown as { id: string; full_name: string } | null;
       if (!emp) return;
       if (!map.has(emp.id)) map.set(emp.id, { empId: emp.id, name: emp.full_name, totalHours: 0, submittedHours: 0, entries: [] });
       const g = map.get(emp.id)!;

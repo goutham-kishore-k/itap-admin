@@ -79,7 +79,7 @@ export async function fetchEntries(
 
   const { data } = await q;
   return (data ?? []).map(e => {
-    const emp = e.employees as { id: string; full_name: string } | null;
+    const emp = e.employees as unknown as { id: string; full_name: string } | null;
     return {
       id:          e.id,
       employee_id: e.employee_id,
@@ -118,7 +118,7 @@ export async function fetchApprovals(
     id:               r.id,
     short_id:         'TS-' + r.id.replace(/-/g, '').slice(0, 8).toUpperCase(),
     employee_id:      r.employee_id,
-    emp_name:         (r.employees as { full_name: string } | null)?.full_name ?? '—',
+    emp_name:         (r.employees as unknown as { full_name: string } | null)?.full_name ?? '—',
     period_type:      r.period_type,
     period_start:     r.period_start,
     period_end:       r.period_end,
@@ -126,9 +126,9 @@ export async function fetchApprovals(
     entry_count:      r.entry_count,
     status:           r.status,
     notes:            r.notes,
-    approved_by_name: (r.approver as { full_name: string } | null)?.full_name ?? null,
+    approved_by_name: (r.approver as unknown as { full_name: string } | null)?.full_name ?? null,
     approved_at:      r.approved_at,
-    reverted_by_name: (r.reverter as { full_name: string } | null)?.full_name ?? null,
+    reverted_by_name: (r.reverter as unknown as { full_name: string } | null)?.full_name ?? null,
     reverted_at:      r.reverted_at ?? null,
   }));
 }

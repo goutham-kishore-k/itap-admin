@@ -152,7 +152,7 @@ export default function TeamRequestsPage() {
       ) : (
         <div className="space-y-2">
           {requests.map(req => {
-            const emp    = req.employees as { full_name: string; designation: string | null } | null;
+            const emp    = req.employees as unknown as { full_name: string; designation: string | null } | null;
             const isOpen = expanded === req.id;
             return (
               <div key={req.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">

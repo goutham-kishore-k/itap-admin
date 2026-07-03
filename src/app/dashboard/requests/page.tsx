@@ -138,7 +138,7 @@ export default function AdminRequestsPage() {
       ) : (
         <div className="space-y-2">
           {requests.map(req => {
-            const emp    = req.employees as { full_name: string; designation: string | null } | null;
+            const emp    = req.employees as unknown as { full_name: string; designation: string | null } | null;
             const isOpen = expanded === req.id;
             const isRejecting = rejectingId === req.id;
 
