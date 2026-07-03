@@ -9,19 +9,21 @@ function StatCard({
   label, value, sub, href, color,
 }: {
   label: string; value: number | string; sub: string; href: string;
-  color: 'brand' | 'blue' | 'amber' | 'green';
+  color: 'brand' | 'blue' | 'amber' | 'green' | 'purple';
 }) {
   const ring: Record<string, string> = {
-    brand: 'bg-brand/8 text-brand',
-    blue:  'bg-blue-50 text-blue-600',
-    amber: 'bg-amber-50 text-amber-700',
-    green: 'bg-green-50 text-green-700',
+    brand:  'bg-brand/8 text-brand',
+    blue:   'bg-blue-50 text-blue-600',
+    amber:  'bg-amber-50 text-amber-700',
+    green:  'bg-green-50 text-green-700',
+    purple: 'bg-purple-50 text-purple-700',
   };
   const dot: Record<string, string> = {
-    brand: 'bg-brand',
-    blue:  'bg-blue-500',
-    amber: 'bg-amber-500',
-    green: 'bg-green-500',
+    brand:  'bg-brand',
+    blue:   'bg-blue-500',
+    amber:  'bg-amber-500',
+    green:  'bg-green-500',
+    purple: 'bg-purple-500',
   };
   return (
     <Link href={href}
@@ -67,6 +69,7 @@ export default async function DashboardPage() {
     { data: pendingEntries },
     { count: pendingRequests },
     { count: activeJobs },
+    { count: newContacts },
     { data: recentRequests },
   ] = await Promise.all([
     admin.from('employees').select('id', { count: 'exact', head: true }).eq('is_active', true),
@@ -76,6 +79,7 @@ export default async function DashboardPage() {
       .order('date', { ascending: false }),
     admin.from('hr_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     admin.from('career_positions').select('id', { count: 'exact', head: true }).eq('is_active', true),
+    admin.from('contact_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'),
     admin.from('hr_requests')
       .select('id, type, title, created_at, employees!employee_id(full_name)')
       .eq('status', 'pending')
@@ -145,7 +149,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard
           label="Active Employees"
           value={empCount ?? 0}
@@ -173,6 +177,13 @@ export default async function DashboardPage() {
           sub="Active listings"
           href="/dashboard/jobs"
           color="brand"
+        />
+        <StatCard
+          label="Contact Requests"
+          value={newContacts ?? 0}
+          sub="New submissions"
+          href="/dashboard/contacts"
+          color="purple"
         />
       </div>
 
@@ -304,6 +315,10 @@ export default async function DashboardPage() {
           <Link href="/dashboard/requests"
             className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full hover:bg-gray-200 transition-colors">
             Review Requests
+          </Link>
+          <Link href="/dashboard/contacts"
+            className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full hover:bg-gray-200 transition-colors">
+            Review Contact Requests
           </Link>
           <Link href="/dashboard/org"
             className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full hover:bg-gray-200 transition-colors">

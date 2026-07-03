@@ -1,5 +1,6 @@
 export interface CareerPosition {
   id: string;
+  job_id?: string;
   title: string;
   department: string;
   location: string;
@@ -69,6 +70,22 @@ export interface AttendanceRecord {
   clock_out: string | null;
   status: 'present' | 'absent' | 'half_day' | 'wfh' | 'on_leave';
   notes: string | null;
+  created_at: string;
+}
+
+export interface ContactRequest {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  company: string | null;
+  phone: string | null;
+  service: string | null;
+  message: string;
+  status: 'new' | 'contacted' | 'closed';
+  admin_notes: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
   created_at: string;
 }
 

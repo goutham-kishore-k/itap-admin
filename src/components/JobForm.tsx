@@ -103,7 +103,14 @@ export default function JobForm({ initialData }: { initialData?: CareerPosition 
       )}
 
       <section className="bg-white rounded-2xl border border-gray-100 p-6 space-y-5">
-        <h2 className="font-semibold text-gray-900 border-b border-gray-100 pb-4">Position details</h2>
+        <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+          <h2 className="font-semibold text-gray-900">Position details</h2>
+          {isEdit && (
+            <span className="font-mono text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-md">
+              {initialData!.job_id || '—'}
+            </span>
+          )}
+        </div>
 
         <div>
           <label className={label}>Title <span className="text-red-400">*</span></label>

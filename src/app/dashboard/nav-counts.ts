@@ -2,12 +2,13 @@
 
 import { createAdminClient } from '@/lib/supabase-admin';
 
-export async function fetchNavCounts(): Promise<{ requests: number; timesheets: number }> {
+export async function fetchNavCounts(): Promise<{ requests: number; timesheets: number; contacts: number }> {
   const admin = createAdminClient();
-  const [{ count: rc }, { data: tsRows }] = await Promise.all([
+  const [{ count: rc }, { data: tsRows }, { count: cc }] = await Promise.all([
     admin.from('hr_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     admin.from('timesheet_entries').select('employee_id').eq('status', 'submitted'),
+    admin.from('contact_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'),
   ]);
   const timesheets = new Set(tsRows?.map(r => r.employee_id) ?? []).size;
-  return { requests: rc ?? 0, timesheets };
+  return { requests: rc ?? 0, timesheets, contacts: cc ?? 0 };
 }

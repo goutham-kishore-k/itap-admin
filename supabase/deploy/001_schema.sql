@@ -1,7 +1,8 @@
 -- ============================================================
 -- iTAP Admin — Complete Schema (fresh environment deploy)
--- Generated from migrations: 20260702100000 → 20260703200000
--- Run once in: Supabase Dashboard → SQL Editor
+-- Includes: core HR schema, contact_requests, career_positions job_id
+-- Safe to re-run — every statement is idempotent.
+-- Run in: Supabase Dashboard → SQL Editor
 -- ============================================================
 
 
@@ -130,6 +131,24 @@ create table if not exists project_assignments (
   unique (project_id, employee_id)
 );
 
+-- 10. Contact requests (public website contact form submissions)
+create table if not exists contact_requests (
+  id          uuid        primary key default gen_random_uuid(),
+  first_name  text        not null,
+  last_name   text        not null,
+  email       text        not null,
+  company     text,
+  phone       text,
+  service     text,
+  message     text        not null,
+  status      text        not null default 'new'
+              check (status in ('new', 'contacted', 'closed')),
+  admin_notes text,
+  reviewed_by uuid        references employees(id),
+  reviewed_at timestamptz,
+  created_at  timestamptz not null default now()
+);
+
 
 -- ============================================================
 -- SEED DATA
@@ -179,6 +198,7 @@ alter table timesheet_entries   enable row level security;
 alter table attendance          enable row level security;
 alter table hr_requests         enable row level security;
 alter table project_assignments enable row level security;
+alter table contact_requests    enable row level security;
 
 
 -- ============================================================
@@ -218,6 +238,9 @@ do $$ begin
   -- project_assignments
   drop policy if exists "pa_own_select"   on project_assignments;
   drop policy if exists "pa_admin_all"    on project_assignments;
+  -- contact_requests
+  drop policy if exists "cr_insert_public" on contact_requests;
+  drop policy if exists "cr_admin_all"     on contact_requests;
 end $$;
 
 -- ── Departments ───────────────────────────────────────────────
@@ -351,3 +374,53 @@ create policy "pa_own_select" on project_assignments for select to authenticated
 create policy "pa_admin_all"  on project_assignments for all    to authenticated
   using     (get_my_employee_role() = 'hr_admin')
   with check (get_my_employee_role() = 'hr_admin');
+
+-- ── Contact requests ──────────────────────────────────────────
+-- Anonymous visitors on the public website can submit a contact request
+create policy "cr_insert_public" on contact_requests for insert
+  to anon, authenticated with check (true);
+-- Only hr_admin can read / update / delete submissions
+create policy "cr_admin_all" on contact_requests for all to authenticated
+  using     (get_my_employee_role() = 'hr_admin')
+  with check (get_my_employee_role() = 'hr_admin');
+
+
+-- ============================================================
+-- CAREER POSITIONS — Job ID support
+-- career_positions itself is managed outside this script (created via
+-- the Supabase dashboard), so this block is guarded to be a no-op
+-- until that table exists, and safe to re-run any number of times.
+-- ============================================================
+
+do $$ begin
+  if to_regclass('public.career_positions') is not null then
+    create sequence if not exists career_positions_job_id_seq start 1001;
+
+    if not exists (
+      select 1 from information_schema.columns
+      where table_name = 'career_positions' and column_name = 'job_id'
+    ) then
+      alter table career_positions add column job_id text;
+    end if;
+
+    update career_positions
+      set job_id = 'ITAP-' || nextval('career_positions_job_id_seq')
+      where job_id is null;
+
+    alter table career_positions
+      alter column job_id set default ('ITAP-' || nextval('career_positions_job_id_seq'));
+    alter table career_positions alter column job_id set not null;
+
+    begin
+      alter table career_positions add constraint career_positions_job_id_key unique (job_id);
+    exception when duplicate_object then null;
+    end;
+
+    create index if not exists career_positions_title_idx  on career_positions (lower(title));
+    create index if not exists career_positions_job_id_idx on career_positions (lower(job_id));
+  end if;
+end $$;
+
+-- PostgREST caches the table schema and won't expose a newly added
+-- column to select('*') queries until it's told to reload.
+notify pgrst, 'reload schema';

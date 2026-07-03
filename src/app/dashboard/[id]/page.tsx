@@ -46,7 +46,14 @@ export default function EditPostingPage() {
         <span>/</span>
         <span className="text-gray-700 font-medium">Edit</span>
       </div>
-      <h1 className="text-xl font-bold text-gray-900 mb-6">{position?.title}</h1>
+      <div className="flex items-center gap-2.5 mb-6">
+        <h1 className="text-xl font-bold text-gray-900">{position?.title}</h1>
+        {position && (
+          <span className="font-mono text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-1 rounded-md">
+            {position.job_id || '—'}
+          </span>
+        )}
+      </div>
       {position && <JobForm initialData={position} />}
     </div>
   );

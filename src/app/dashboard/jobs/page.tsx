@@ -8,6 +8,7 @@ import type { CareerPosition } from '@/types';
 export default function JobPostingsPage() {
   const [positions, setPositions] = useState<CareerPosition[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   const fetchPositions = useCallback(async () => {
     const supabase = createClient();
@@ -36,6 +37,14 @@ export default function JobPostingsPage() {
 
   const activeCount = positions.filter(p => p.is_active).length;
 
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? positions.filter(p =>
+        p.title.toLowerCase().includes(q) ||
+        (p.job_id ?? '').toLowerCase().includes(q) ||
+        p.department.toLowerCase().includes(q))
+    : positions;
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -54,6 +63,19 @@ export default function JobPostingsPage() {
         </Link>
       </div>
 
+      <div className="relative max-w-sm">
+        <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+        </svg>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search by title, Job ID, or department…"
+          className="w-full pl-10 pr-3.5 py-2.5 border border-gray-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand transition-colors bg-white"
+        />
+      </div>
+
       {loading ? (
         <div className="flex justify-center py-20">
           <div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
@@ -65,11 +87,16 @@ export default function JobPostingsPage() {
             Create your first posting →
           </Link>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-20 bg-white rounded-2xl border border-gray-100">
+          <p className="text-gray-400">No postings match &ldquo;{search}&rdquo;.</p>
+        </div>
       ) : (
         <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
+                <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wider px-5 py-3">Job ID</th>
                 <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wider px-5 py-3">Title</th>
                 <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wider px-5 py-3 hidden md:table-cell">Dept</th>
                 <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wider px-5 py-3 hidden lg:table-cell">Type</th>
@@ -78,8 +105,11 @@ export default function JobPostingsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {positions.map(pos => (
+              {filtered.map(pos => (
                 <tr key={pos.id} className="hover:bg-gray-50/70 transition-colors">
+                  <td className="px-5 py-4">
+                    <span className="font-mono text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded-md whitespace-nowrap">{pos.job_id || '—'}</span>
+                  </td>
                   <td className="px-5 py-4">
                     <span className="font-semibold text-gray-900">{pos.title}</span>
                     <span className="block text-xs text-gray-400 mt-0.5">{pos.location} · {pos.work_arrangement}</span>
