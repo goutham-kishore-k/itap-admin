@@ -59,7 +59,50 @@ export default function ProfilePage() {
 
   const ROLE_LABEL: Record<string, string> = { employee: 'Employee', manager: 'Manager', hr_admin: 'HR Admin' };
 
-  if (loading) return <div className="flex justify-center py-16"><div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" /></div>;
+  if (loading) return (
+    <div className="max-w-xl space-y-6 animate-pulse">
+      <div className="h-6 w-28 bg-gray-200 rounded-lg" />
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        {/* Avatar header */}
+        <div className="bg-ink/80 px-6 py-8 flex items-center gap-4">
+          <div className="w-14 h-14 rounded-full bg-white/20 shrink-0" />
+          <div className="space-y-2">
+            <div className="h-5 w-36 bg-white/20 rounded-lg" />
+            <div className="h-3 w-24 bg-white/10 rounded" />
+          </div>
+        </div>
+        {/* Field rows */}
+        <div className="divide-y divide-gray-50">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="px-6 py-3.5 flex items-center justify-between">
+              <div className="h-3.5 w-20 bg-gray-100 rounded" />
+              <div className="h-3.5 w-32 bg-gray-200 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Password section */}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-50 space-y-1.5">
+          <div className="h-4 w-32 bg-gray-200 rounded" />
+          <div className="h-3 w-48 bg-gray-100 rounded" />
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="h-3.5 w-24 bg-gray-100 rounded" />
+              <div className="h-10 bg-gray-100 rounded-lg" />
+            </div>
+            <div className="space-y-2">
+              <div className="h-3.5 w-28 bg-gray-100 rounded" />
+              <div className="h-10 bg-gray-100 rounded-lg" />
+            </div>
+          </div>
+          <div className="h-9 w-36 bg-brand/20 rounded-full" />
+        </div>
+      </div>
+    </div>
+  );
 
   if (!employee) return <p className="text-gray-400 text-center py-16">Profile not found.</p>;
 
