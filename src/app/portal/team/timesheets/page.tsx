@@ -9,12 +9,6 @@ import {
 // ─── date helpers ─────────────────────────────────────────────────────────────
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0]; }
-function today() { return fmtDate(new Date()); }
-
-function todayMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
 
 function todayWeek() {
   const d = new Date();
@@ -39,20 +33,6 @@ function weekValueToRange(value: string) {
   return { start: fmtDate(mon), end: fmtDate(sun) };
 }
 
-function monthValueToRange(value: string) {
-  const [y, m] = value.split('-').map(Number);
-  return {
-    start: fmtDate(new Date(Date.UTC(y, m - 1, 1))),
-    end:   fmtDate(new Date(Date.UTC(y, m, 0))),
-  };
-}
-
-function getPeriodRange(type: PeriodType, value: string) {
-  if (type === 'daily')  return { start: value, end: value };
-  if (type === 'weekly') return weekValueToRange(value);
-  return monthValueToRange(value);
-}
-
 function displayDate(d: string) {
   return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
@@ -69,7 +49,6 @@ function displayPeriod(row: ApprovalRow) {
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
-type PeriodType = 'daily' | 'weekly' | 'monthly';
 type StatFilter = 'submitted' | 'approved' | 'notStarted' | null;
 type Tab = 'review' | 'history';
 
@@ -157,8 +136,14 @@ export default function TeamTimesheetsPage() {
   const [entries, setEntries]         = useState<EntryRow[]>([]);
   const [loading, setLoading]         = useState(false);
 
-  const [periodType, setPeriodType]   = useState<PeriodType>('weekly');
+  const periodType = 'weekly' as const;
   const [periodValue, setPeriodValue] = useState(() => todayWeek());
+
+  // Export modal state
+  const [showExport, setShowExport]       = useState(false);
+  const [exportEmpId, setExportEmpId]     = useState('');
+  const [exportFrom, setExportFrom]       = useState('');
+  const [exportTo, setExportTo]           = useState('');
 
   // History tab state
   const [approvals, setApprovals]         = useState<ApprovalRow[]>([]);
@@ -192,13 +177,6 @@ export default function TeamTimesheetsPage() {
     setStatFilter(prev => prev === f ? null : f);
   }
 
-  function changePeriodType(t: PeriodType) {
-    setPeriodType(t);
-    if (t === 'daily')   setPeriodValue(today());
-    if (t === 'weekly')  setPeriodValue(todayWeek());
-    if (t === 'monthly') setPeriodValue(todayMonth());
-  }
-
   // Load own employee ID + direct reports
   useEffect(() => {
     const supabase = createClient();
@@ -217,7 +195,7 @@ export default function TeamTimesheetsPage() {
   const loadEntries = useCallback(async () => {
     if (!myEmpId) return;
     setLoading(true);
-    const { start, end } = getPeriodRange(periodType, periodValue);
+    const { start, end } = weekValueToRange(periodValue);
     const supabase = createClient();
     const { data } = await supabase
       .from('timesheet_entries')
@@ -241,7 +219,7 @@ export default function TeamTimesheetsPage() {
       };
     }));
     setLoading(false);
-  }, [myEmpId, periodType, periodValue]);
+  }, [myEmpId, periodValue]);
 
   useEffect(() => { if (tab === 'review') loadEntries(); }, [loadEntries, tab]);
 
@@ -294,7 +272,7 @@ export default function TeamTimesheetsPage() {
       total:           reports.length,
       submitted:       submittedEmpIds.size,
       approved:        approvedEmpIds.size,
-      pending:         entries.filter(e => e.status === 'submitted').length,
+      pendingApprovals: submittedEmpIds.size,
       notStarted:      notStartedEmps.length,
       submittedEmpIds,
       approvedEmpIds,
@@ -337,9 +315,9 @@ export default function TeamTimesheetsPage() {
     const submitted = empEntries.filter(e => e.status === 'submitted');
     if (!submitted.length) return;
     setActing(empId);
-    const { start, end } = getPeriodRange(periodType, periodValue);
+    const { start, end } = weekValueToRange(periodValue);
     const totalHours = submitted.reduce((s, e) => s + e.hours, 0);
-    const approvalId = await approvePeriod(empId, periodType, start, end, submitted.map(e => e.id), totalHours, approvalNotes || null);
+    const approvalId = await approvePeriod(empId, 'weekly', start, end, submitted.map(e => e.id), totalHours, approvalNotes || null);
     const shortId = 'TS-' + approvalId.replace(/-/g, '').slice(0, 8).toUpperCase();
     setLastApproved(prev => ({ ...prev, [empId]: shortId }));
     setApprovalNotes('');
@@ -375,8 +353,7 @@ export default function TeamTimesheetsPage() {
     loadEntries();
   }
 
-  const periodInputType = periodType === 'daily' ? 'date' : periodType === 'weekly' ? 'week' : 'month';
-  const periodLabel     = periodType === 'daily' ? 'today' : periodType === 'weekly' ? 'this week' : 'this month';
+  const periodLabel = 'this week';
 
   const tabCls = (t: Tab) =>
     `px-4 py-2 text-sm font-semibold rounded-full transition-all ${tab === t ? 'bg-ink text-white' : 'text-gray-500 hover:text-gray-900'}`;
@@ -385,13 +362,81 @@ export default function TeamTimesheetsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">Team Timesheets</h1>
-        <p className="text-sm text-gray-400 mt-0.5">
-          {reports.length} direct report{reports.length !== 1 ? 's' : ''}
-          {stats.pending > 0 && ` · ${stats.pending} entr${stats.pending !== 1 ? 'ies' : 'y'} awaiting review`}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Team Timesheets</h1>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {reports.length} direct report{reports.length !== 1 ? 's' : ''}
+            {stats.pendingApprovals > 0 && ` · ${stats.pendingApprovals} week${stats.pendingApprovals !== 1 ? 's' : ''} awaiting review`}
+          </p>
+        </div>
+        {reports.length > 0 && (
+          <button onClick={() => {
+            const now = new Date();
+            const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
+            setExportFrom(`${y}-${m}-01`);
+            setExportTo(now.toISOString().split('T')[0]);
+            setExportEmpId(reports[0]?.id ?? '');
+            setShowExport(true);
+          }}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold bg-white border border-gray-200 text-gray-700 rounded-full hover:border-gray-300 transition-colors shrink-0">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+            </svg>
+            Export PDF
+          </button>
+        )}
       </div>
+
+      {/* Export modal */}
+      {showExport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-gray-900">Export Timesheet Report</h2>
+              <button onClick={() => setShowExport(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">Employee</label>
+                <select value={exportEmpId} onChange={e => setExportEmpId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white">
+                  {reports.map(r => <option key={r.id} value={r.id}>{r.full_name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">From</label>
+                  <input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">To</label>
+                  <input type="date" value={exportTo} onChange={e => setExportTo(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                disabled={!exportEmpId || !exportFrom || !exportTo || exportFrom > exportTo}
+                onClick={() => {
+                  window.open(`/api/report/timesheet?empId=${exportEmpId}&from=${exportFrom}&to=${exportTo}`, '_blank');
+                  setShowExport(false);
+                }}
+                className="flex-1 py-2.5 bg-brand text-white text-sm font-semibold rounded-full hover:bg-brand-dark disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                Generate PDF
+              </button>
+              <button onClick={() => setShowExport(false)}
+                className="px-4 py-2.5 bg-gray-100 text-gray-600 text-sm font-semibold rounded-full hover:bg-gray-200 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-gray-100 rounded-full p-1 w-fit">
@@ -401,23 +446,11 @@ export default function TeamTimesheetsPage() {
 
       {tab === 'review' && (<>
 
-      {/* Period selector */}
-      <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex flex-wrap items-end gap-4">
+      {/* Week picker */}
+      <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-end gap-4">
         <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Period</label>
-          <div className="flex gap-1">
-            {(['daily', 'weekly', 'monthly'] as PeriodType[]).map(t => (
-              <button key={t} onClick={() => changePeriodType(t)}
-                className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-all capitalize
-                  ${periodType === t ? 'bg-ink text-white border-ink' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}>
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1.5 capitalize">{periodType}</label>
-          <input type={periodInputType} value={periodValue} onChange={e => setPeriodValue(e.target.value)}
+          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Week</label>
+          <input type="week" value={periodValue} onChange={e => setPeriodValue(e.target.value)}
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white" />
         </div>
       </div>
@@ -432,7 +465,7 @@ export default function TeamTimesheetsPage() {
               active={statFilter === 'submitted'} onClick={() => toggleStatFilter('submitted')} />
             <StatCard label="Approved"        value={stats.approved}   color="green"
               active={statFilter === 'approved'} onClick={() => toggleStatFilter('approved')} />
-            <StatCard label="Pending entries" value={stats.pending}    color="amber" sub="entries to review"
+            <StatCard label="Pending approval" value={stats.pendingApprovals} color="amber" sub="weeks awaiting review"
               active={statFilter === 'submitted'} onClick={() => toggleStatFilter('submitted')} />
             <StatCard label="Not started"     value={stats.notStarted} color={stats.notStarted > 0 ? 'red' : 'gray'} sub="no entries logged"
               active={statFilter === 'notStarted'} onClick={() => toggleStatFilter('notStarted')} />
@@ -618,11 +651,11 @@ export default function TeamTimesheetsPage() {
                               <div className="flex gap-2">
                                 <button onClick={() => handleApprove(g.empId, g.entries)} disabled={isActing}
                                   className="px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-full hover:bg-green-700 disabled:opacity-50 transition-colors">
-                                  {isActing ? '…' : `Approve ${submitted.length > 1 ? `${submitted.length} entries` : 'entry'}`}
+                                  {isActing ? '…' : 'Approve Week'}
                                 </button>
                                 <button onClick={() => { setRejectingEmp(g.empId); setRejectReason(''); }} disabled={isActing}
                                   className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-semibold rounded-full hover:bg-red-50 disabled:opacity-50 transition-colors">
-                                  Reject
+                                  Reject Week
                                 </button>
                               </div>
                             </div>

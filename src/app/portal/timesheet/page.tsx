@@ -50,6 +50,11 @@ export default function TimesheetPage() {
   const [reopening, setReopening] = useState(false);
   const [error, setError]         = useState('');
 
+  // Copy from previous week
+  const [copyPreview, setCopyPreview]   = useState<TimesheetEntry[] | null>(null);
+  const [copyLoading, setCopyLoading]   = useState(false);
+  const [copyConfirming, setCopyConfirming] = useState(false);
+
   const days   = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const weekEnd = addDays(weekStart, 6);
 
@@ -134,6 +139,47 @@ export default function TimesheetPage() {
     load();
   }
 
+  async function loadCopyPreview() {
+    if (!employeeId) return;
+    setCopyLoading(true);
+    setCopyPreview(null);
+    const prevStart = addDays(weekStart, -7);
+    const prevEnd   = addDays(weekStart, -1);
+    const supabase  = createClient();
+    const { data } = await supabase
+      .from('timesheet_entries')
+      .select('*')
+      .eq('employee_id', employeeId)
+      .gte('date', fmt(prevStart))
+      .lte('date', fmt(prevEnd))
+      .order('date').order('created_at');
+    setCopyPreview(data ?? []);
+    setCopyLoading(false);
+  }
+
+  async function confirmCopy() {
+    if (!copyPreview?.length || !employeeId) return;
+    setCopyConfirming(true);
+    const supabase = createClient();
+    const rows = copyPreview.map(e => {
+      // Shift date by +7 days to land on same weekday in current week
+      const newDate = fmt(addDays(new Date(e.date + 'T12:00:00'), 7));
+      return {
+        employee_id: employeeId,
+        date:        newDate,
+        project_id:  e.project_id ?? null,
+        project:     e.project,
+        hours:       e.hours,
+        notes:       e.notes ?? null,
+        status:      'draft',
+      };
+    });
+    await supabase.from('timesheet_entries').insert(rows);
+    setCopyPreview(null);
+    setCopyConfirming(false);
+    load();
+  }
+
   const totalHours   = entries.reduce((s, e) => s + Number(e.hours), 0);
   const status       = weekStatus(entries);
   const hasDrafts    = entries.some(e => e.status === 'draft');
@@ -203,6 +249,51 @@ export default function TimesheetPage() {
               className="px-4 py-2 bg-red-600 text-white text-xs font-semibold rounded-full hover:bg-red-700 disabled:opacity-60 transition-colors shrink-0">
               {reopening ? 'Reopening…' : 'Reopen for editing'}
             </button>
+          )}
+        </div>
+      )}
+
+      {/* Copy from last week — preview panel */}
+      {copyPreview !== null && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-amber-900">Copy from last week</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                {copyPreview.length === 0
+                  ? 'No entries found in the previous week.'
+                  : `${copyPreview.length} entr${copyPreview.length === 1 ? 'y' : 'ies'} will be copied as drafts into this week.`}
+              </p>
+            </div>
+            <button onClick={() => setCopyPreview(null)}
+              className="text-amber-400 hover:text-amber-600 text-lg leading-none">×</button>
+          </div>
+          {copyPreview.length > 0 && (
+            <div className="divide-y divide-amber-100 rounded-xl overflow-hidden border border-amber-100">
+              {copyPreview.map(e => {
+                const newDate = fmt(addDays(new Date(e.date + 'T12:00:00'), 7));
+                return (
+                  <div key={e.id} className="bg-white px-3 py-2 flex items-center gap-3 text-sm">
+                    <span className="text-gray-500 w-24 shrink-0">{displayDate(new Date(newDate + 'T12:00:00'))}</span>
+                    <span className="flex-1 font-medium text-gray-800 truncate">{e.project}</span>
+                    {e.notes && <span className="text-gray-400 text-xs truncate max-w-[120px]">{e.notes}</span>}
+                    <span className="text-gray-700 font-semibold shrink-0">{e.hours}h</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {copyPreview.length > 0 && (
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setCopyPreview(null)}
+                className="px-4 py-1.5 text-sm border border-amber-200 text-amber-800 rounded-full hover:bg-amber-100 transition-colors">
+                Cancel
+              </button>
+              <button onClick={confirmCopy} disabled={copyConfirming}
+                className="px-4 py-1.5 text-sm bg-amber-500 text-white font-semibold rounded-full hover:bg-amber-600 disabled:opacity-60 transition-colors">
+                {copyConfirming ? 'Copying…' : 'Confirm copy'}
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -309,16 +400,24 @@ export default function TimesheetPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex items-center justify-between pt-2 gap-3 flex-wrap">
         <span className="text-sm text-gray-500">
           Total: <strong className="text-gray-900">{totalHours.toFixed(1)}h</strong>
         </span>
-        {hasDrafts && !weekIsLocked && (
-          <button onClick={submitWeek} disabled={submitting}
-            className="px-5 py-2 bg-ink text-white text-sm font-semibold rounded-full hover:bg-gray-800 disabled:opacity-60 transition-colors">
-            {submitting ? 'Submitting…' : 'Submit Week for Approval'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {!weekIsLocked && copyPreview === null && (
+            <button onClick={loadCopyPreview} disabled={copyLoading}
+              className="px-4 py-2 text-sm border border-gray-200 text-gray-600 rounded-full hover:border-amber-300 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-60 transition-colors">
+              {copyLoading ? 'Loading…' : '↩ Copy from last week'}
+            </button>
+          )}
+          {hasDrafts && !weekIsLocked && (
+            <button onClick={submitWeek} disabled={submitting}
+              className="px-5 py-2 bg-ink text-white text-sm font-semibold rounded-full hover:bg-gray-800 disabled:opacity-60 transition-colors">
+              {submitting ? 'Submitting…' : 'Submit Week for Approval'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

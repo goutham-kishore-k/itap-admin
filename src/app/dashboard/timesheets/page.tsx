@@ -10,12 +10,6 @@ import {
 // ─── date helpers ────────────────────────────────────────────────────────────
 
 function fmtDate(d: Date) { return d.toISOString().split('T')[0]; }
-function today() { return fmtDate(new Date()); }
-
-function todayMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
 
 function todayWeek() {
   const d = new Date();
@@ -40,19 +34,6 @@ function weekValueToRange(value: string): { start: string; end: string } {
   return { start: fmtDate(mon), end: fmtDate(sun) };
 }
 
-function monthValueToRange(value: string): { start: string; end: string } {
-  const [y, m] = value.split('-').map(Number);
-  const first = new Date(Date.UTC(y, m - 1, 1));
-  const last  = new Date(Date.UTC(y, m, 0));
-  return { start: fmtDate(first), end: fmtDate(last) };
-}
-
-function getPeriodRange(type: PeriodType, value: string): { start: string; end: string } {
-  if (type === 'daily')  return { start: value, end: value };
-  if (type === 'weekly') return weekValueToRange(value);
-  return monthValueToRange(value);
-}
-
 function displayPeriod(row: ApprovalRow) {
   const s = new Date(row.period_start + 'T12:00:00');
   const e = new Date(row.period_end   + 'T12:00:00');
@@ -69,7 +50,6 @@ function displayDate(d: string) {
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
-type PeriodType = 'daily' | 'weekly' | 'monthly';
 type Tab = 'review' | 'history';
 
 const STATUS_STYLE: Record<string, string> = {
@@ -125,7 +105,7 @@ export default function TimesheetsPage() {
 
   // Review tab state
   const [employees, setEmployees]     = useState<EmpOption[]>([]);
-  const [periodType, setPeriodType]   = useState<PeriodType>('weekly');
+  const periodType = 'weekly' as const;
   const [periodValue, setPeriodValue] = useState(() => todayWeek());
   const [entries, setEntries]         = useState<EntryRow[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
@@ -165,11 +145,11 @@ export default function TimesheetsPage() {
 
   const loadEntries = useCallback(async () => {
     setLoadingEntries(true);
-    const { start, end } = getPeriodRange(periodType, periodValue);
+    const { start, end } = weekValueToRange(periodValue);
     const rows = await fetchEntries('all', start, end);
     setEntries(rows);
     setLoadingEntries(false);
-  }, [periodType, periodValue]);
+  }, [periodValue]);
 
   useEffect(() => { if (tab === 'review') loadEntries(); }, [loadEntries, tab]);
 
@@ -187,13 +167,13 @@ export default function TimesheetsPage() {
     const submittedEmpIds = new Set(entries.filter(e => e.status === 'submitted').map(e => e.employee_id));
     const approvedEmpIds  = new Set(entries.filter(e => e.status === 'approved').map(e => e.employee_id));
     const hasEntriesIds   = new Set(entries.map(e => e.employee_id));
-    const pendingCount    = entries.filter(e => e.status === 'submitted').length;
+    const pendingApprovals = submittedEmpIds.size;
     const notStartedEmps  = employees.filter(e => !hasEntriesIds.has(e.id));
     return {
       total:           employees.length,
       submitted:       submittedEmpIds.size,
       approved:        approvedEmpIds.size,
-      pending:         pendingCount,
+      pendingApprovals,
       notStarted:      notStartedEmps.length,
       submittedEmpIds,
       approvedEmpIds,
@@ -235,9 +215,9 @@ export default function TimesheetsPage() {
     const submitted = empEntries.filter(e => e.status === 'submitted');
     if (!submitted.length) return;
     setActing(empId);
-    const { start, end } = getPeriodRange(periodType, periodValue);
+    const { start, end } = weekValueToRange(periodValue);
     const totalHours = submitted.reduce((s, e) => s + e.hours, 0);
-    const approvalId = await approvePeriod(empId, periodType, start, end, submitted.map(e => e.id), totalHours, approvalNotes || null);
+    const approvalId = await approvePeriod(empId, 'weekly', start, end, submitted.map(e => e.id), totalHours, approvalNotes || null);
     const shortId = 'TS-' + approvalId.replace(/-/g, '').slice(0, 8).toUpperCase();
     setLastApproved(prev => ({ ...prev, [empId]: shortId }));
     setApprovalNotes('');
@@ -273,18 +253,10 @@ export default function TimesheetsPage() {
     loadHistory();
   }
 
-  function changePeriodType(t: PeriodType) {
-    setPeriodType(t);
-    if (t === 'daily')   setPeriodValue(today());
-    if (t === 'weekly')  setPeriodValue(todayWeek());
-    if (t === 'monthly') setPeriodValue(todayMonth());
-  }
-
   const tabCls = (t: Tab) =>
     `px-4 py-2 text-sm font-semibold rounded-full transition-all ${tab === t ? 'bg-ink text-white' : 'text-gray-500 hover:text-gray-900'}`;
   const filterBtn = (v: string, cur: string) =>
     `px-3 py-1.5 text-xs font-semibold rounded-full border transition-all ${v === cur ? 'bg-ink text-white border-ink' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`;
-  const periodInputType = periodType === 'daily' ? 'date' : periodType === 'weekly' ? 'week' : 'month';
 
   return (
     <div className="space-y-5">
@@ -302,22 +274,11 @@ export default function TimesheetsPage() {
       {/* ── REVIEW TAB ──────────────────────────────────────────────────── */}
       {tab === 'review' && (
         <div className="space-y-4">
-          {/* Period filters */}
-          <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex flex-wrap items-end gap-4">
+          {/* Week picker */}
+          <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-end gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Period</label>
-              <div className="flex gap-1">
-                {(['daily', 'weekly', 'monthly'] as PeriodType[]).map(t => (
-                  <button key={t} onClick={() => changePeriodType(t)}
-                    className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-all capitalize ${periodType === t ? 'bg-ink text-white border-ink' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5 capitalize">{periodType}</label>
-              <input type={periodInputType} value={periodValue} onChange={e => setPeriodValue(e.target.value)}
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Week</label>
+              <input type="week" value={periodValue} onChange={e => setPeriodValue(e.target.value)}
                 className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white" />
             </div>
           </div>
@@ -335,7 +296,7 @@ export default function TimesheetsPage() {
                 <StatCard label="Approved"        value={stats.approved}   color="green"
                   active={statFilter === 'approved'}
                   onClick={() => toggleStatFilter('approved')} />
-                <StatCard label="Pending entries" value={stats.pending}    color="amber" sub="entries to review"
+                <StatCard label="Pending approval" value={stats.pendingApprovals} color="amber" sub="weeks awaiting review"
                   active={statFilter === 'submitted'}
                   onClick={() => toggleStatFilter('submitted')} />
                 <StatCard label="Not started"     value={stats.notStarted} color={stats.notStarted > 0 ? 'red' : 'gray'} sub="no entries logged"
@@ -425,7 +386,7 @@ export default function TimesheetsPage() {
                 const approvedId       = lastApproved[g.empId];
                 const isExpanded       = expandedEmps.has(g.empId);
                 const hasPending       = submitted.length > 0;
-                const periodLabel      = periodType === 'daily' ? 'today' : periodType === 'weekly' ? 'this week' : 'this month';
+                const periodLabel      = 'this week';
 
                 return (
                   <div key={g.empId} className={`bg-white rounded-2xl border overflow-hidden transition-all ${hasPending ? 'border-blue-200' : 'border-gray-100'}`}>
@@ -548,11 +509,11 @@ export default function TimesheetsPage() {
                                   <div className="flex gap-2">
                                     <button onClick={() => handleApprove(g.empId, g.entries)} disabled={isActing}
                                       className="px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-full hover:bg-green-700 disabled:opacity-50 transition-colors">
-                                      {isActing ? '…' : `Approve ${submitted.length > 1 ? `${submitted.length} entries` : 'entry'}`}
+                                      {isActing ? '…' : 'Approve Week'}
                                     </button>
                                     <button onClick={() => { setRejectingEmp(g.empId); setRejectReason(''); }} disabled={isActing}
                                       className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-semibold rounded-full hover:bg-red-50 disabled:opacity-50 transition-colors">
-                                      Reject
+                                      Reject Week
                                     </button>
                                   </div>
                                 </div>
