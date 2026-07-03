@@ -103,7 +103,7 @@ export default function EmployeesTable({ employees, pendingUserIds }: Props) {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Employees</h1>
           <p className="text-sm text-gray-400 mt-0.5">
@@ -165,7 +165,9 @@ export default function EmployeesTable({ employees, pendingUserIds }: Props) {
                 <span className="text-sm font-semibold text-gray-700">Active</span>
                 <span className="text-xs text-gray-400">({active.length})</span>
               </div>
-              <Table rows={active} pendingSet={pendingSet} />
+              <div className="overflow-x-auto">
+                <Table rows={active} pendingSet={pendingSet} />
+              </div>
             </div>
           )}
           {inactive.length > 0 && (
@@ -174,7 +176,9 @@ export default function EmployeesTable({ employees, pendingUserIds }: Props) {
                 <span className="text-sm font-semibold text-gray-700">Inactive</span>
                 <span className="text-xs text-gray-400">({inactive.length})</span>
               </div>
-              <Table rows={inactive} pendingSet={pendingSet} />
+              <div className="overflow-x-auto">
+                <Table rows={inactive} pendingSet={pendingSet} />
+              </div>
             </div>
           )}
         </>

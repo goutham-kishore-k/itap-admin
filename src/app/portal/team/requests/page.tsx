@@ -113,7 +113,7 @@ export default function TeamRequestsPage() {
   }
 
   const filterBtn = (val: string, cur: string) =>
-    `px-3 py-1.5 text-xs font-semibold rounded-full border transition-all ${val === cur ? 'bg-ink text-white border-ink' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`;
+    `px-3 py-2 text-xs font-semibold rounded-full border transition-all ${val === cur ? 'bg-ink text-white border-ink' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`;
 
   return (
     <div className="space-y-5">

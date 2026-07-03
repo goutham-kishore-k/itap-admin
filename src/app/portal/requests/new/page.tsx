@@ -121,7 +121,7 @@ export default function NewRequestPage() {
                 {leaveTypes.map(lt => <option key={lt.id} value={lt.id}>{lt.name}{lt.days_per_year > 0 ? ` (${lt.days_per_year} days/yr)` : ''}</option>)}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div><label className={lbl}>From</label><input type="date" className={inp} value={startDate} onChange={e => setStartDate(e.target.value)} required /></div>
               <div><label className={lbl}>To</label><input type="date" className={inp} value={endDate} onChange={e => setEndDate(e.target.value)} required /></div>
             </div>
@@ -132,7 +132,7 @@ export default function NewRequestPage() {
 
         {type === 'expense' && (
           <>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div><label className={lbl}>Category</label>
                 <select className={inp} value={expCategory} onChange={e => setExpCategory(e.target.value)}>
                   {EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
@@ -161,7 +161,7 @@ export default function NewRequestPage() {
 
         {type === 'asset' && (
           <>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div><label className={lbl}>Asset Type</label>
                 <select className={inp} value={assetType} onChange={e => setAssetType(e.target.value)}>
                   {ASSET_TYPES.map(a => <option key={a}>{a}</option>)}
@@ -177,7 +177,7 @@ export default function NewRequestPage() {
           </>
         )}
 
-        <div className="flex gap-3 pt-2">
+        <div className="flex gap-3 pt-2 flex-wrap">
           <button type="submit" disabled={saving}
             className="px-6 py-2.5 bg-brand text-white font-semibold rounded-full text-sm hover:bg-brand-dark disabled:opacity-60 transition-colors">
             {saving ? 'Submitting…' : 'Submit Request'}

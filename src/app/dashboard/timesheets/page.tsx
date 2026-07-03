@@ -275,7 +275,7 @@ export default function TimesheetsPage() {
       {tab === 'review' && (
         <div className="space-y-4">
           {/* Week picker */}
-          <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-end gap-4">
+          <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-end gap-4 flex-wrap">
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1.5">Week</label>
               <input type="week" value={periodValue} onChange={e => setPeriodValue(e.target.value)}
@@ -450,6 +450,7 @@ export default function TimesheetsPage() {
                     {/* ── Expanded detail ── */}
                     {isExpanded && (
                       <>
+                        <div className="overflow-x-auto">
                         <table className="w-full text-sm border-t border-gray-100">
                           <thead>
                             <tr className="border-b border-gray-50 bg-gray-50/50">
@@ -476,6 +477,7 @@ export default function TimesheetsPage() {
                             ))}
                           </tbody>
                         </table>
+                        </div>
 
                         {(submitted.length > 0 || approvalIds.length > 0) && (
                           <div className="px-5 py-4 border-t border-gray-50 space-y-3">
@@ -581,7 +583,7 @@ export default function TimesheetsPage() {
               No approvals found.
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50/50">

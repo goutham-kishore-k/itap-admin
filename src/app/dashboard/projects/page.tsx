@@ -144,7 +144,7 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-black text-gray-900 tracking-tight">Projects</h1>
           <p className="text-sm text-gray-400 mt-0.5">{active} active · {inactive} inactive</p>
@@ -180,7 +180,7 @@ export default function ProjectsPage() {
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/50">
@@ -227,7 +227,7 @@ export default function ProjectsPage() {
                         </span>
                       </td>
                       <td className="px-5 py-4">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-2 flex-wrap">
                           <button onClick={() => openAssign(p.id)}
                             className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
                               assigningId === p.id
@@ -302,7 +302,7 @@ export default function ProjectsPage() {
                             const assignedIds = new Set(assignees.map(a => a.employee_id));
                             const unassigned  = allEmployees.filter(e => !assignedIds.has(e.id));
                             return unassigned.length > 0 ? (
-                              <div className="flex gap-2">
+                              <div className="flex gap-2 flex-wrap">
                                 <select value={pickEmployee} onChange={e => setPickEmployee(e.target.value)}
                                   className="flex-1 max-w-xs px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-brand bg-white">
                                   <option value="">Add employee…</option>

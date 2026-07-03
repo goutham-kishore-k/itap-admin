@@ -134,7 +134,7 @@ export default function NewEmployeePage() {
           </div>
         </section>
 
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
           <button type="submit" disabled={sending}
             className="px-6 py-2.5 bg-brand text-white font-semibold rounded-full text-sm hover:bg-brand-dark disabled:opacity-60 transition-colors">
             {sending ? 'Creating account…' : 'Create Account'}

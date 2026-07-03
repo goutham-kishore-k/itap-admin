@@ -38,7 +38,7 @@ export default function JobPostingsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-black text-gray-900 tracking-tight">Job Postings</h1>
           <p className="text-sm text-gray-400 mt-0.5">
@@ -66,7 +66,7 @@ export default function JobPostingsPage() {
           </Link>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">

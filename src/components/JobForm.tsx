@@ -198,7 +198,7 @@ export default function JobForm({ initialData }: { initialData?: CareerPosition 
         </div>
       </section>
 
-      <div className="flex items-center gap-3 pb-8">
+      <div className="flex items-center gap-3 pb-8 flex-wrap">
         <button
           type="submit"
           disabled={saving}

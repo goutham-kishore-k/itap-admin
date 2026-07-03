@@ -362,7 +362,7 @@ export default function TeamTimesheetsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Team Timesheets</h1>
           <p className="text-sm text-gray-400 mt-0.5">
@@ -405,7 +405,7 @@ export default function TeamTimesheetsPage() {
                   {reports.map(r => <option key={r.id} value={r.id}>{r.full_name}</option>)}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 mb-1.5">From</label>
                   <input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)}
@@ -447,7 +447,7 @@ export default function TeamTimesheetsPage() {
       {tab === 'review' && (<>
 
       {/* Week picker */}
-      <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-end gap-4">
+      <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-end gap-4 flex-wrap">
         <div>
           <label className="block text-xs font-semibold text-gray-500 mb-1.5">Week</label>
           <input type="week" value={periodValue} onChange={e => setPeriodValue(e.target.value)}
@@ -593,6 +593,7 @@ export default function TeamTimesheetsPage() {
                 {/* Expanded detail */}
                 {isExpanded && (
                   <>
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm border-t border-gray-100">
                       <thead>
                         <tr className="border-b border-gray-50 bg-gray-50/50">
@@ -619,6 +620,7 @@ export default function TeamTimesheetsPage() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
 
                     {(submitted.length > 0 || approvalIds.length > 0) && (
                       <div className="px-5 py-4 border-t border-gray-50 space-y-3">
@@ -723,7 +725,7 @@ export default function TeamTimesheetsPage() {
               No approvals found.
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50/50">

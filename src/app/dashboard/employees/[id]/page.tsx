@@ -109,7 +109,7 @@ export default function EditEmployeePage() {
           </div>
         </section>
 
-        <div className="flex gap-3 pb-4">
+        <div className="flex gap-3 pb-4 flex-wrap">
           <button type="submit" className="px-6 py-2.5 bg-brand text-white font-semibold rounded-full text-sm hover:bg-brand-dark transition-colors">Save Changes</button>
           <Link href="/dashboard/employees" className="px-6 py-2.5 bg-white border border-gray-200 text-gray-600 font-semibold rounded-full text-sm hover:border-gray-300 transition-colors">Cancel</Link>
         </div>

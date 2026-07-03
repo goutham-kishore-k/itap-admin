@@ -159,6 +159,7 @@ export default function AttendancePage() {
             {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
           </h2>
         </div>
+        <div className="overflow-x-auto">
         {history.length === 0 ? (
           <p className="text-center text-gray-400 py-10 text-sm">No records yet this month.</p>
         ) : (
@@ -189,6 +190,7 @@ export default function AttendancePage() {
             </tbody>
           </table>
         )}
+        </div>
       </div>
     </div>
   );
