@@ -19,7 +19,6 @@ function buildTree(employees: (Employee & { dept_name?: string })[]) {
       roots.push(node);
     }
   });
-  // Sort children alphabetically for consistent order
   map.forEach(node => node.children.sort((a, b) => a.full_name.localeCompare(b.full_name)));
   return roots;
 }
@@ -30,16 +29,42 @@ const ROLE_COLOR: Record<string, string> = {
   employee: 'bg-white text-gray-900 border border-gray-200',
 };
 
-function NodeCard({ node, depth }: { node: OrgNode; depth: number }) {
+type Highlight = 'self' | 'manager' | 'teammate' | null;
+
+function NodeCard({
+  node, depth, currentEmpId, currentManagerId,
+}: {
+  node: OrgNode;
+  depth: number;
+  currentEmpId?: string;
+  currentManagerId?: string;
+}) {
   const [expanded, setExpanded] = useState(depth < 2);
   const hasChildren = node.children.length > 0;
+
+  const highlight: Highlight =
+    node.id === currentEmpId          ? 'self'     :
+    node.id === currentManagerId       ? 'manager'  :
+    currentManagerId && node.manager_id === currentManagerId && node.id !== currentEmpId
+                                       ? 'teammate' : null;
+
+  const ringClass =
+    highlight === 'self'     ? 'ring-2 ring-brand ring-offset-2'     :
+    highlight === 'manager'  ? 'ring-2 ring-violet-500 ring-offset-2' :
+    highlight === 'teammate' ? 'ring-2 ring-amber-400 ring-offset-2'  : '';
+
+  const badge =
+    highlight === 'self'     ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-brand text-white px-2 py-0.5 rounded-full">You</span>          :
+    highlight === 'manager'  ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-violet-500 text-white px-2 py-0.5 rounded-full">Your Manager</span> :
+    highlight === 'teammate' ? <span className="mt-1.5 inline-block text-[9px] font-bold tracking-widest uppercase bg-amber-400 text-white px-2 py-0.5 rounded-full">Teammate</span>     :
+    null;
 
   return (
     <div className="flex flex-col items-center">
       {/* Card */}
       <div
-        className={`px-4 py-3 rounded-2xl shadow-sm min-w-[150px] max-w-[200px] text-center select-none ${ROLE_COLOR[node.role] ?? ROLE_COLOR.employee}`}
-        title={node.email}
+        className={`px-4 py-3 rounded-2xl shadow-sm min-w-[150px] max-w-[200px] text-center select-none transition-all ${ROLE_COLOR[node.role] ?? ROLE_COLOR.employee} ${ringClass}`}
+        title={node.email ?? undefined}
       >
         <p className="text-sm font-bold leading-snug">{node.full_name}</p>
         {node.designation && (
@@ -48,14 +73,13 @@ function NodeCard({ node, depth }: { node: OrgNode; depth: number }) {
         {node.dept_name && (
           <p className="text-[10px] opacity-40 mt-0.5">{node.dept_name}</p>
         )}
+        {badge}
       </div>
 
       {/* Expand/collapse toggle + children */}
       {hasChildren && (
         <div className="flex flex-col items-center">
-          {/* Vertical line from card down to toggle */}
           <div className="w-px h-4 bg-gray-200" />
-
           <button
             onClick={() => setExpanded(v => !v)}
             className="w-6 h-6 rounded-full border border-gray-200 bg-white text-gray-400 text-xs flex items-center justify-center hover:border-brand hover:text-brand transition-colors z-10"
@@ -66,38 +90,25 @@ function NodeCard({ node, depth }: { node: OrgNode; depth: number }) {
 
           {expanded && (
             <>
-              {/* Vertical line from toggle down to horizontal bar */}
               <div className="w-px h-4 bg-gray-200" />
-
-              {/* Children row — each child gets half-borders to form the T-connector */}
               <div className="flex">
                 {node.children.map((child, i) => {
                   const isFirst = i === 0;
                   const isLast  = i === node.children.length - 1;
                   const isOnly  = node.children.length === 1;
-
                   return (
-                    <div
-                      key={child.id}
-                      className="flex flex-col items-center px-4 min-w-[180px] relative"
-                    >
-                      {/* Horizontal connector: left half, right half, and vertical drop */}
+                    <div key={child.id} className="flex flex-col items-center px-4 min-w-[180px] relative">
                       <div className="w-full h-5 relative">
-                        {/* Left horizontal segment */}
-                        {!isFirst && (
-                          <div className="absolute top-0 left-0 right-1/2 h-px bg-gray-200" />
-                        )}
-                        {/* Right horizontal segment */}
-                        {!isLast && (
-                          <div className="absolute top-0 left-1/2 right-0 h-px bg-gray-200" />
-                        )}
-                        {/* Vertical drop to child */}
-                        {!isOnly && (
-                          <div className="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px bg-gray-200" />
-                        )}
+                        {!isFirst && <div className="absolute top-0 left-0 right-1/2 h-px bg-gray-200" />}
+                        {!isLast  && <div className="absolute top-0 left-1/2 right-0 h-px bg-gray-200" />}
+                        {!isOnly  && <div className="absolute top-0 bottom-0 left-1/2 -translate-x-px w-px bg-gray-200" />}
                       </div>
-
-                      <NodeCard node={child} depth={depth + 1} />
+                      <NodeCard
+                        node={child}
+                        depth={depth + 1}
+                        currentEmpId={currentEmpId}
+                        currentManagerId={currentManagerId}
+                      />
                     </div>
                   );
                 })}
@@ -112,8 +123,12 @@ function NodeCard({ node, depth }: { node: OrgNode; depth: number }) {
 
 export default function OrgChart({
   employees,
+  currentEmpId,
+  currentManagerId,
 }: {
   employees: (Employee & { dept_name?: string })[];
+  currentEmpId?: string;
+  currentManagerId?: string;
 }) {
   const roots = buildTree(employees);
 
@@ -129,7 +144,13 @@ export default function OrgChart({
     <div className="overflow-x-auto pb-6">
       <div className="flex gap-10 justify-center pt-4 min-w-max mx-auto">
         {roots.map(root => (
-          <NodeCard key={root.id} node={root} depth={0} />
+          <NodeCard
+            key={root.id}
+            node={root}
+            depth={0}
+            currentEmpId={currentEmpId}
+            currentManagerId={currentManagerId}
+          />
         ))}
       </div>
     </div>

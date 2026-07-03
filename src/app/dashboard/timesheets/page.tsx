@@ -81,23 +81,40 @@ const STATUS_STYLE: Record<string, string> = {
 
 // ─── stat card ───────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, color }: {
+type StatFilter = 'submitted' | 'approved' | 'notStarted' | null;
+
+function StatCard({ label, value, sub, color, active, onClick }: {
   label: string; value: number | string; sub?: string;
   color: 'blue' | 'green' | 'amber' | 'gray' | 'red';
+  active?: boolean; onClick?: () => void;
 }) {
   const colors = {
-    blue:  'bg-blue-50 border-blue-100 text-blue-700',
-    green: 'bg-green-50 border-green-100 text-green-700',
-    amber: 'bg-amber-50 border-amber-100 text-amber-700',
-    gray:  'bg-gray-50 border-gray-100 text-gray-500',
-    red:   'bg-red-50 border-red-100 text-red-700',
+    blue:  'bg-blue-50 border-blue-200 text-blue-700',
+    green: 'bg-green-50 border-green-200 text-green-700',
+    amber: 'bg-amber-50 border-amber-200 text-amber-700',
+    gray:  'bg-gray-50 border-gray-200 text-gray-500',
+    red:   'bg-red-50 border-red-200 text-red-700',
+  };
+  const rings = {
+    blue:  'ring-2 ring-blue-400 ring-offset-1',
+    green: 'ring-2 ring-green-400 ring-offset-1',
+    amber: 'ring-2 ring-amber-400 ring-offset-1',
+    gray:  'ring-2 ring-gray-400 ring-offset-1',
+    red:   'ring-2 ring-red-400 ring-offset-1',
   };
   return (
-    <div className={`rounded-2xl border px-5 py-4 ${colors[color]}`}>
+    <button
+      onClick={onClick}
+      className={`rounded-2xl border px-5 py-4 text-left w-full transition-all
+        ${colors[color]}
+        ${onClick ? 'hover:opacity-80 cursor-pointer' : 'cursor-default'}
+        ${active ? rings[color] : ''}`}
+    >
       <p className="text-2xl font-black">{value}</p>
       <p className="text-xs font-semibold mt-0.5 opacity-80">{label}</p>
       {sub && <p className="text-[10px] opacity-60 mt-0.5">{sub}</p>}
-    </div>
+      {active && <p className="text-[10px] font-bold mt-1 opacity-70">↓ filtering below</p>}
+    </button>
   );
 }
 
@@ -113,6 +130,20 @@ export default function TimesheetsPage() {
   const [entries, setEntries]         = useState<EntryRow[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [expandedEmps, setExpandedEmps] = useState<Set<string>>(new Set());
+  const [statFilter, setStatFilter] = useState<StatFilter>(null);
+
+  function toggleStatFilter(f: StatFilter) {
+    setStatFilter(prev => prev === f ? null : f);
+  }
+
+  function toggleExpand(empId: string) {
+    setExpandedEmps(prev => {
+      const next = new Set(prev);
+      next.has(empId) ? next.delete(empId) : next.add(empId);
+      return next;
+    });
+  }
 
   // Per-group action state
   const [acting, setActing]             = useState<string | null>(null);
@@ -157,13 +188,16 @@ export default function TimesheetsPage() {
     const approvedEmpIds  = new Set(entries.filter(e => e.status === 'approved').map(e => e.employee_id));
     const hasEntriesIds   = new Set(entries.map(e => e.employee_id));
     const pendingCount    = entries.filter(e => e.status === 'submitted').length;
-    const notStarted      = employees.filter(e => !hasEntriesIds.has(e.id)).length;
+    const notStartedEmps  = employees.filter(e => !hasEntriesIds.has(e.id));
     return {
-      total:        employees.length,
-      submitted:    submittedEmpIds.size,
-      approved:     approvedEmpIds.size,
-      pending:      pendingCount,
-      notStarted,
+      total:           employees.length,
+      submitted:       submittedEmpIds.size,
+      approved:        approvedEmpIds.size,
+      pending:         pendingCount,
+      notStarted:      notStartedEmps.length,
+      submittedEmpIds,
+      approvedEmpIds,
+      notStartedEmps,
     };
   }, [employees, entries]);
 
@@ -182,9 +216,18 @@ export default function TimesheetsPage() {
   }, [entries]);
 
   const filteredGroups = useMemo(() => {
+    let base = groups;
+    if (statFilter === 'submitted') base = base.filter(g => stats.submittedEmpIds.has(g.empId));
+    else if (statFilter === 'approved') base = base.filter(g => stats.approvedEmpIds.has(g.empId));
     const q = searchQuery.trim().toLowerCase();
-    return q ? groups.filter(g => g.name.toLowerCase().includes(q)) : groups;
-  }, [groups, searchQuery]);
+    return q ? base.filter(g => g.name.toLowerCase().includes(q)) : base;
+  }, [groups, searchQuery, statFilter, stats.submittedEmpIds, stats.approvedEmpIds]);
+
+  const notStartedFiltered = useMemo(() => {
+    if (statFilter !== 'notStarted') return [];
+    const q = searchQuery.trim().toLowerCase();
+    return q ? stats.notStartedEmps.filter(e => e.full_name.toLowerCase().includes(q)) : stats.notStartedEmps;
+  }, [statFilter, stats.notStartedEmps, searchQuery]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -281,12 +324,34 @@ export default function TimesheetsPage() {
 
           {/* Stats cards */}
           {!loadingEntries && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <StatCard label="Total employees"    value={stats.total}     color="gray" />
-              <StatCard label="Submitted"          value={stats.submitted} color="blue"  sub="awaiting review" />
-              <StatCard label="Approved"           value={stats.approved}  color="green" />
-              <StatCard label="Pending entries"    value={stats.pending}   color="amber" sub="entries to review" />
-              <StatCard label="Not started"        value={stats.notStarted} color={stats.notStarted > 0 ? 'red' : 'gray'} sub="no entries logged" />
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <StatCard label="Total employees" value={stats.total}      color="gray"
+                  active={statFilter === null}
+                  onClick={() => setStatFilter(null)} />
+                <StatCard label="Submitted"       value={stats.submitted}  color="blue"  sub="awaiting review"
+                  active={statFilter === 'submitted'}
+                  onClick={() => toggleStatFilter('submitted')} />
+                <StatCard label="Approved"        value={stats.approved}   color="green"
+                  active={statFilter === 'approved'}
+                  onClick={() => toggleStatFilter('approved')} />
+                <StatCard label="Pending entries" value={stats.pending}    color="amber" sub="entries to review"
+                  active={statFilter === 'submitted'}
+                  onClick={() => toggleStatFilter('submitted')} />
+                <StatCard label="Not started"     value={stats.notStarted} color={stats.notStarted > 0 ? 'red' : 'gray'} sub="no entries logged"
+                  active={statFilter === 'notStarted'}
+                  onClick={() => toggleStatFilter('notStarted')} />
+              </div>
+              {statFilter && (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <span>Showing:
+                    <strong className="ml-1 text-gray-800">
+                      {statFilter === 'submitted' ? 'Submitted / Pending employees' : statFilter === 'approved' ? 'Approved employees' : 'Not started employees'}
+                    </strong>
+                  </span>
+                  <button onClick={() => setStatFilter(null)} className="text-gray-400 hover:text-gray-700 font-semibold">× clear</button>
+                </div>
+              )}
             </div>
           )}
 
@@ -315,140 +380,210 @@ export default function TimesheetsPage() {
             <div className="flex justify-center py-12">
               <div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
             </div>
+          ) : statFilter === 'notStarted' ? (
+            notStartedFiltered.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">
+                {searchQuery ? `No employees matching "${searchQuery}"` : 'All employees have entries this period.'}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-400">{notStartedFiltered.length} employee{notStartedFiltered.length !== 1 ? 's' : ''} with no entries</p>
+                {notStartedFiltered.map(emp => (
+                  <div key={emp.id} className="bg-white rounded-2xl border border-red-100 px-5 py-4 flex items-center gap-4">
+                    <div className="w-9 h-9 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-sm font-bold shrink-0">
+                      {emp.full_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-bold text-gray-900">{emp.full_name}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">No entries logged this period</p>
+                    </div>
+                    <span className="text-xs font-semibold bg-red-50 text-red-600 px-2.5 py-1 rounded-full border border-red-100">Not started</span>
+                  </div>
+                ))}
+              </div>
+            )
           ) : filteredGroups.length === 0 ? (
             <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">
-              {searchQuery ? `No employees matching "${searchQuery}"` : 'No timesheet entries for this period.'}
+              {searchQuery ? `No employees matching "${searchQuery}"` : statFilter ? 'No employees in this category.' : 'No timesheet entries for this period.'}
             </div>
           ) : (
             <div className="space-y-4">
-              {searchQuery && filteredGroups.length > 0 && (
+              {(searchQuery || statFilter) && filteredGroups.length > 0 && (
                 <p className="text-xs text-gray-400">
                   Showing {filteredGroups.length} of {groups.length} employee{groups.length !== 1 ? 's' : ''}
                 </p>
               )}
               {filteredGroups.map(g => {
-                const submitted       = g.entries.filter(e => e.status === 'submitted');
-                const approved        = g.entries.filter(e => e.status === 'approved');
-                const approvalIds     = [...new Set(approved.map(e => e.approval_id).filter((id): id is string => Boolean(id)))];
-                const isActing        = acting === g.empId;
-                const isRejecting     = rejectingEmp === g.empId;
+                const submitted        = g.entries.filter(e => e.status === 'submitted');
+                const approved         = g.entries.filter(e => e.status === 'approved');
+                const rejected         = g.entries.filter(e => e.status === 'rejected');
+                const draft            = g.entries.filter(e => e.status === 'draft');
+                const approvalIds      = [...new Set(approved.map(e => e.approval_id).filter((id): id is string => Boolean(id)))];
+                const isActing         = acting === g.empId;
+                const isRejecting      = rejectingEmp === g.empId;
                 const isRevertingGroup = revertConfirmGroup === g.empId;
-                const approvedId      = lastApproved[g.empId];
-                const allApproved     = g.entries.length > 0 && g.entries.every(e => e.status === 'approved');
+                const approvedId       = lastApproved[g.empId];
+                const isExpanded       = expandedEmps.has(g.empId);
+                const hasPending       = submitted.length > 0;
+                const periodLabel      = periodType === 'daily' ? 'today' : periodType === 'weekly' ? 'this week' : 'this month';
 
                 return (
-                  <div key={g.empId} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                    <div className="px-5 py-3.5 flex items-center justify-between border-b border-gray-50">
-                      <div>
-                        <span className="text-sm font-bold text-gray-900">{g.name}</span>
-                        <span className="text-xs text-gray-400 ml-3">
-                          {g.totalHours.toFixed(1)}h total
-                          {submitted.length > 0 && ` · ${submitted.length} entr${submitted.length !== 1 ? 'ies' : 'y'} (${g.submittedHours.toFixed(1)}h) pending`}
-                        </span>
+                  <div key={g.empId} className={`bg-white rounded-2xl border overflow-hidden transition-all ${hasPending ? 'border-blue-200' : 'border-gray-100'}`}>
+
+                    {/* ── Collapsed header (always visible) ── */}
+                    <button
+                      onClick={() => toggleExpand(g.empId)}
+                      className="w-full px-5 py-4 flex items-center gap-4 hover:bg-gray-50/50 transition-colors text-left">
+                      {/* Avatar */}
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${hasPending ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                        {g.name.charAt(0).toUpperCase()}
                       </div>
-                      {approvedId && (
-                        <span className="text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
-                          ✓ {approvedId}
-                        </span>
-                      )}
-                      {allApproved && !approvedId && (
-                        <span className="text-xs font-semibold text-green-700 bg-green-50 px-2.5 py-1 rounded-full">All approved</span>
-                      )}
-                    </div>
 
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-50 bg-gray-50/30">
-                          <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Date</th>
-                          <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Project</th>
-                          <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Hrs</th>
-                          <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider hidden md:table-cell">Notes</th>
-                          <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {g.entries.map(e => (
-                          <tr key={e.id} className="hover:bg-gray-50/30 transition-colors">
-                            <td className="px-5 py-2.5 text-gray-600 whitespace-nowrap text-xs">{displayDate(e.date)}</td>
-                            <td className="px-5 py-2.5 font-medium text-gray-900">{e.project}</td>
-                            <td className="px-5 py-2.5 font-semibold text-gray-700">{e.hours}h</td>
-                            <td className="px-5 py-2.5 text-gray-400 hidden md:table-cell text-xs">{e.notes ?? '—'}</td>
-                            <td className="px-5 py-2.5">
-                              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${STATUS_STYLE[e.status]}`}>
-                                {e.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-
-                    {(submitted.length > 0 || approvalIds.length > 0) && (
-                      <div className="px-5 py-4 border-t border-gray-50 space-y-3">
-                        {submitted.length > 0 && (
-                          isRejecting ? (
-                            <div className="space-y-2 bg-red-50 border border-red-100 rounded-xl p-4">
-                              <label className="block text-xs font-semibold text-red-700">Rejection reason <span className="text-red-500">*</span></label>
-                              <textarea
-                                value={rejectReason} onChange={e => setRejectReason(e.target.value)}
-                                rows={2} autoFocus placeholder="Explain why these entries are being rejected…"
-                                className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm focus:outline-none focus:border-red-400 bg-white resize-none" />
-                              <div className="flex gap-2">
-                                <button onClick={() => handleReject(g.empId, g.entries)} disabled={!rejectReason.trim() || isActing}
-                                  className="px-4 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-full hover:bg-red-700 disabled:opacity-50 transition-colors">
-                                  {isActing ? '…' : 'Confirm Reject'}
-                                </button>
-                                <button onClick={() => { setRejectingEmp(null); setRejectReason(''); }}
-                                  className="px-4 py-1.5 bg-white border border-gray-200 text-gray-600 text-xs font-semibold rounded-full hover:border-gray-300 transition-colors">
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap items-end gap-3">
-                              <div className="flex-1 min-w-[200px]">
-                                <label className="block text-xs font-semibold text-gray-400 mb-1">Approval note (optional)</label>
-                                <input value={approvalNotes} onChange={e => setApprovalNotes(e.target.value)}
-                                  placeholder="e.g. Reviewed and confirmed"
-                                  className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-brand" />
-                              </div>
-                              <div className="flex gap-2">
-                                <button onClick={() => handleApprove(g.empId, g.entries)} disabled={isActing}
-                                  className="px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-full hover:bg-green-700 disabled:opacity-50 transition-colors">
-                                  {isActing ? '…' : `Approve ${submitted.length > 1 ? `${submitted.length} entries` : 'entry'}`}
-                                </button>
-                                <button onClick={() => { setRejectingEmp(g.empId); setRejectReason(''); }} disabled={isActing}
-                                  className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-semibold rounded-full hover:bg-red-50 disabled:opacity-50 transition-colors">
-                                  Reject
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        )}
-
-                        {approvalIds.length > 0 && (
-                          isRevertingGroup ? (
-                            <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-                              <span className="text-xs text-amber-800 font-medium flex-1">
-                                Revert {approved.length} approved entr{approved.length !== 1 ? 'ies' : 'y'}? They'll go back to submitted.
-                              </span>
-                              <button onClick={() => handleRevertGroup(g.empId, approvalIds)} disabled={isActing}
-                                className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 whitespace-nowrap">
-                                {isActing ? '…' : 'Yes, revert'}
-                              </button>
-                              <button onClick={() => setRevertConfirmGroup(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-3">
-                              <span className="text-xs text-gray-400">{approved.length} entr{approved.length !== 1 ? 'ies' : 'y'} approved</span>
-                              <button onClick={() => setRevertConfirmGroup(g.empId)} disabled={isActing}
-                                className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50">
-                                Revert Approval
-                              </button>
-                            </div>
-                          )
-                        )}
+                      {/* Name + status chips */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-gray-900 truncate">{g.name}</p>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {submitted.length > 0 && (
+                            <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
+                              {submitted.length} pending
+                            </span>
+                          )}
+                          {approved.length > 0 && (
+                            <span className="text-[10px] font-semibold bg-green-50 text-green-700 px-2 py-0.5 rounded-full">
+                              {approved.length} approved
+                            </span>
+                          )}
+                          {rejected.length > 0 && (
+                            <span className="text-[10px] font-semibold bg-red-50 text-red-700 px-2 py-0.5 rounded-full">
+                              {rejected.length} rejected
+                            </span>
+                          )}
+                          {draft.length > 0 && (
+                            <span className="text-[10px] font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                              {draft.length} draft
+                            </span>
+                          )}
+                          {approvedId && (
+                            <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
+                              ✓ {approvedId}
+                            </span>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Cumulative hours */}
+                      <div className="text-right shrink-0 mr-2">
+                        <p className="text-xl font-black text-gray-900 leading-none">
+                          {g.totalHours.toFixed(1)}<span className="text-sm font-semibold text-gray-400 ml-0.5">h</span>
+                        </p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{periodLabel}</p>
+                      </div>
+
+                      {/* Chevron */}
+                      <svg className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {/* ── Expanded detail ── */}
+                    {isExpanded && (
+                      <>
+                        <table className="w-full text-sm border-t border-gray-100">
+                          <thead>
+                            <tr className="border-b border-gray-50 bg-gray-50/50">
+                              <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Date</th>
+                              <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Project</th>
+                              <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Hrs</th>
+                              <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider hidden md:table-cell">Notes</th>
+                              <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                            {g.entries.map(e => (
+                              <tr key={e.id} className="hover:bg-gray-50/30 transition-colors">
+                                <td className="px-5 py-2.5 text-gray-600 whitespace-nowrap text-xs">{displayDate(e.date)}</td>
+                                <td className="px-5 py-2.5 font-medium text-gray-900">{e.project}</td>
+                                <td className="px-5 py-2.5 font-semibold text-gray-700">{e.hours}h</td>
+                                <td className="px-5 py-2.5 text-gray-400 hidden md:table-cell text-xs">{e.notes ?? '—'}</td>
+                                <td className="px-5 py-2.5">
+                                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${STATUS_STYLE[e.status]}`}>
+                                    {e.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+
+                        {(submitted.length > 0 || approvalIds.length > 0) && (
+                          <div className="px-5 py-4 border-t border-gray-50 space-y-3">
+                            {submitted.length > 0 && (
+                              isRejecting ? (
+                                <div className="space-y-2 bg-red-50 border border-red-100 rounded-xl p-4">
+                                  <label className="block text-xs font-semibold text-red-700">Rejection reason <span className="text-red-500">*</span></label>
+                                  <textarea
+                                    value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                                    rows={2} autoFocus placeholder="Explain why these entries are being rejected…"
+                                    className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm focus:outline-none focus:border-red-400 bg-white resize-none" />
+                                  <div className="flex gap-2">
+                                    <button onClick={() => handleReject(g.empId, g.entries)} disabled={!rejectReason.trim() || isActing}
+                                      className="px-4 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-full hover:bg-red-700 disabled:opacity-50 transition-colors">
+                                      {isActing ? '…' : 'Confirm Reject'}
+                                    </button>
+                                    <button onClick={() => { setRejectingEmp(null); setRejectReason(''); }}
+                                      className="px-4 py-1.5 bg-white border border-gray-200 text-gray-600 text-xs font-semibold rounded-full hover:border-gray-300 transition-colors">
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-wrap items-end gap-3">
+                                  <div className="flex-1 min-w-[200px]">
+                                    <label className="block text-xs font-semibold text-gray-400 mb-1">Approval note (optional)</label>
+                                    <input value={approvalNotes} onChange={e => setApprovalNotes(e.target.value)}
+                                      placeholder="e.g. Reviewed and confirmed"
+                                      className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-brand" />
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button onClick={() => handleApprove(g.empId, g.entries)} disabled={isActing}
+                                      className="px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-full hover:bg-green-700 disabled:opacity-50 transition-colors">
+                                      {isActing ? '…' : `Approve ${submitted.length > 1 ? `${submitted.length} entries` : 'entry'}`}
+                                    </button>
+                                    <button onClick={() => { setRejectingEmp(g.empId); setRejectReason(''); }} disabled={isActing}
+                                      className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-semibold rounded-full hover:bg-red-50 disabled:opacity-50 transition-colors">
+                                      Reject
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            )}
+
+                            {approvalIds.length > 0 && (
+                              isRevertingGroup ? (
+                                <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                                  <span className="text-xs text-amber-800 font-medium flex-1">
+                                    Revert {approved.length} approved entr{approved.length !== 1 ? 'ies' : 'y'}? They'll go back to submitted.
+                                  </span>
+                                  <button onClick={() => handleRevertGroup(g.empId, approvalIds)} disabled={isActing}
+                                    className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 whitespace-nowrap">
+                                    {isActing ? '…' : 'Yes, revert'}
+                                  </button>
+                                  <button onClick={() => setRevertConfirmGroup(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-3">
+                                  <span className="text-xs text-gray-400">{approved.length} entr{approved.length !== 1 ? 'ies' : 'y'} approved</span>
+                                  <button onClick={() => setRevertConfirmGroup(g.empId)} disabled={isActing}
+                                    className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50">
+                                    Revert Approval
+                                  </button>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );

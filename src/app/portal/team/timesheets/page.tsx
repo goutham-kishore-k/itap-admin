@@ -1,18 +1,110 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import type { TimesheetEntry } from '@/types';
+import {
+  approvePeriod, rejectPeriod, revertApproval,
+} from '@/app/dashboard/timesheets/actions';
 
-function fmt(d: Date) { return d.toISOString().split('T')[0]; }
-function addDays(d: Date, n: number) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
-function getWeekStart(d: Date) {
-  const date = new Date(d);
-  const day = date.getDay();
-  date.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
-  date.setHours(0, 0, 0, 0);
-  return date;
+// ─── date helpers ─────────────────────────────────────────────────────────────
+
+function fmtDate(d: Date) { return d.toISOString().split('T')[0]; }
+function today() { return fmtDate(new Date()); }
+
+function todayMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
+
+function todayWeek() {
+  const d = new Date();
+  const jan4 = new Date(Date.UTC(d.getFullYear(), 0, 4));
+  const dayNum = (jan4.getUTCDay() + 6) % 7;
+  const week1Mon = new Date(jan4);
+  week1Mon.setUTCDate(jan4.getUTCDate() - dayNum);
+  const diff = d.getTime() - week1Mon.getTime();
+  const week = Math.floor(diff / 604800000) + 1;
+  return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+function weekValueToRange(value: string) {
+  const [yearStr, wStr] = value.split('-W');
+  const year = parseInt(yearStr), week = parseInt(wStr);
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const dayNum = (jan4.getUTCDay() + 6) % 7;
+  const mon = new Date(jan4);
+  mon.setUTCDate(jan4.getUTCDate() - dayNum + (week - 1) * 7);
+  const sun = new Date(mon);
+  sun.setUTCDate(mon.getUTCDate() + 6);
+  return { start: fmtDate(mon), end: fmtDate(sun) };
+}
+
+function monthValueToRange(value: string) {
+  const [y, m] = value.split('-').map(Number);
+  return {
+    start: fmtDate(new Date(Date.UTC(y, m - 1, 1))),
+    end:   fmtDate(new Date(Date.UTC(y, m, 0))),
+  };
+}
+
+function getPeriodRange(type: PeriodType, value: string) {
+  if (type === 'daily')  return { start: value, end: value };
+  if (type === 'weekly') return weekValueToRange(value);
+  return monthValueToRange(value);
+}
+
+function displayDate(d: string) {
+  return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function displayPeriod(row: ApprovalRow) {
+  const s = new Date(row.period_start + 'T12:00:00');
+  const e = new Date(row.period_end   + 'T12:00:00');
+  if (row.period_type === 'daily')
+    return s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  if (row.period_type === 'monthly')
+    return s.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+// ─── types ────────────────────────────────────────────────────────────────────
+
+type PeriodType = 'daily' | 'weekly' | 'monthly';
+type StatFilter = 'submitted' | 'approved' | 'notStarted' | null;
+type Tab = 'review' | 'history';
+
+interface ApprovalRow {
+  id: string;
+  short_id: string;
+  employee_id: string;
+  emp_name: string;
+  period_type: 'daily' | 'weekly' | 'monthly';
+  period_start: string;
+  period_end: string;
+  total_hours: number;
+  entry_count: number;
+  status: 'approved' | 'reverted';
+  notes: string | null;
+  approved_by_name: string | null;
+  approved_at: string;
+  reverted_by_name: string | null;
+  reverted_at: string | null;
+}
+
+interface EntryRow {
+  id: string;
+  employee_id: string;
+  emp_name: string;
+  date: string;
+  project: string;
+  hours: number;
+  notes: string | null;
+  rejection_reason: string | null;
+  status: 'draft' | 'submitted' | 'approved' | 'rejected';
+  approval_id: string | null;
+}
+
+interface DirectReport { id: string; full_name: string; }
 
 const STATUS_STYLE: Record<string, string> = {
   draft:     'bg-gray-100 text-gray-500',
@@ -21,218 +113,454 @@ const STATUS_STYLE: Record<string, string> = {
   rejected:  'bg-red-50 text-red-700',
 };
 
-interface EmpGroup {
-  empId: string;
-  name: string;
-  totalHours: number;
-  submittedHours: number;
-  entries: TimesheetEntry[];
+// ─── stat card ────────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, sub, color, active, onClick }: {
+  label: string; value: number | string; sub?: string;
+  color: 'blue' | 'green' | 'amber' | 'gray' | 'red';
+  active?: boolean; onClick?: () => void;
+}) {
+  const colors = {
+    blue:  'bg-blue-50 border-blue-200 text-blue-700',
+    green: 'bg-green-50 border-green-200 text-green-700',
+    amber: 'bg-amber-50 border-amber-200 text-amber-700',
+    gray:  'bg-gray-50 border-gray-200 text-gray-500',
+    red:   'bg-red-50 border-red-200 text-red-700',
+  };
+  const rings = {
+    blue:  'ring-2 ring-blue-400 ring-offset-1',
+    green: 'ring-2 ring-green-400 ring-offset-1',
+    amber: 'ring-2 ring-amber-400 ring-offset-1',
+    gray:  'ring-2 ring-gray-400 ring-offset-1',
+    red:   'ring-2 ring-red-400 ring-offset-1',
+  };
+  return (
+    <button onClick={onClick}
+      className={`rounded-2xl border px-5 py-4 text-left w-full transition-all
+        ${colors[color]}
+        ${onClick ? 'hover:opacity-80 cursor-pointer' : 'cursor-default'}
+        ${active ? rings[color] : ''}`}>
+      <p className="text-2xl font-black">{value}</p>
+      <p className="text-xs font-semibold mt-0.5 opacity-80">{label}</p>
+      {sub && <p className="text-[10px] opacity-60 mt-0.5">{sub}</p>}
+      {active && <p className="text-[10px] font-bold mt-1 opacity-70">↓ filtering below</p>}
+    </button>
+  );
 }
 
-type Tab = 'pending' | 'week';
+// ─── component ────────────────────────────────────────────────────────────────
 
 export default function TeamTimesheetsPage() {
-  const [tab, setTab]             = useState<Tab>('pending');
-  const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
-  const [groups, setGroups]       = useState<EmpGroup[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [expanded, setExpanded]   = useState<string | null>(null);
-  const [acting, setActing]       = useState<string | null>(null);
-  const [myEmpId, setMyEmpId]     = useState<string | null>(null);
+  const [tab, setTab]                 = useState<Tab>('review');
+  const [myEmpId, setMyEmpId]         = useState<string | null>(null);
+  const [reports, setReports]         = useState<DirectReport[]>([]);
+  const [entries, setEntries]         = useState<EntryRow[]>([]);
+  const [loading, setLoading]         = useState(false);
 
-  const weekEnd = addDays(weekStart, 6);
+  const [periodType, setPeriodType]   = useState<PeriodType>('weekly');
+  const [periodValue, setPeriodValue] = useState(() => todayWeek());
 
-  // Load own employee ID (used for reviewed_by and to exclude own entries)
+  // History tab state
+  const [approvals, setApprovals]         = useState<ApprovalRow[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [histEmpFilter, setHistEmpFilter] = useState('all');
+  const [histStatus, setHistStatus]       = useState('all');
+  const [reverting, setReverting]         = useState<string | null>(null);
+  const [revertConfirm, setRevertConfirm] = useState<string | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statFilter, setStatFilter]   = useState<StatFilter>(null);
+  const [expandedEmps, setExpandedEmps] = useState<Set<string>>(new Set());
+
+  // Per-group action state
+  const [acting, setActing]               = useState<string | null>(null);
+  const [rejectingEmp, setRejectingEmp]   = useState<string | null>(null);
+  const [rejectReason, setRejectReason]   = useState('');
+  const [approvalNotes, setApprovalNotes] = useState('');
+  const [lastApproved, setLastApproved]   = useState<Record<string, string>>({});
+  const [revertConfirmGroup, setRevertConfirmGroup] = useState<string | null>(null);
+
+  function toggleExpand(empId: string) {
+    setExpandedEmps(prev => {
+      const next = new Set(prev);
+      next.has(empId) ? next.delete(empId) : next.add(empId);
+      return next;
+    });
+  }
+
+  function toggleStatFilter(f: StatFilter) {
+    setStatFilter(prev => prev === f ? null : f);
+  }
+
+  function changePeriodType(t: PeriodType) {
+    setPeriodType(t);
+    if (t === 'daily')   setPeriodValue(today());
+    if (t === 'weekly')  setPeriodValue(todayWeek());
+    if (t === 'monthly') setPeriodValue(todayMonth());
+  }
+
+  // Load own employee ID + direct reports
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return;
-      supabase.from('employees').select('id').eq('user_id', user.id).single()
-        .then(({ data }) => setMyEmpId(data?.id ?? null));
+      const { data: emp } = await supabase.from('employees').select('id').eq('user_id', user.id).single();
+      if (!emp) return;
+      setMyEmpId(emp.id);
+      const { data: reps } = await supabase
+        .from('employees').select('id, full_name')
+        .eq('manager_id', emp.id).eq('is_active', true).order('full_name');
+      setReports(reps ?? []);
     });
   }, []);
 
-  const load = useCallback(async () => {
+  const loadEntries = useCallback(async () => {
+    if (!myEmpId) return;
     setLoading(true);
+    const { start, end } = getPeriodRange(periodType, periodValue);
     const supabase = createClient();
-
-    // RLS automatically limits results to direct reports; we also exclude own entries
-    let q = supabase.from('timesheet_entries')
+    const { data } = await supabase
+      .from('timesheet_entries')
       .select('*, employees!employee_id(id, full_name)')
-      .order('date');
+      .gte('date', start).lte('date', end)
+      .neq('employee_id', myEmpId)
+      .order('date').order('created_at');
+    setEntries((data ?? []).map(e => {
+      const emp = e.employees as unknown as { id: string; full_name: string } | null;
+      return {
+        id:               e.id,
+        employee_id:      e.employee_id,
+        emp_name:         emp?.full_name ?? '(unknown)',
+        date:             e.date,
+        project:          e.project,
+        hours:            Number(e.hours),
+        notes:            e.notes ?? null,
+        rejection_reason: (e as Record<string, unknown>).rejection_reason as string | null ?? null,
+        status:           e.status,
+        approval_id:      e.approval_id ?? null,
+      };
+    }));
+    setLoading(false);
+  }, [myEmpId, periodType, periodValue]);
 
-    if (tab === 'pending') {
-      q = q.eq('status', 'submitted');
-    } else {
-      q = q.gte('date', fmt(weekStart)).lte('date', fmt(weekEnd));
-    }
+  useEffect(() => { if (tab === 'review') loadEntries(); }, [loadEntries, tab]);
 
-    if (myEmpId) q = q.neq('employee_id', myEmpId);
+  const loadHistory = useCallback(async () => {
+    if (!reports.length) return;
+    setLoadingHistory(true);
+    const supabase = createClient();
+    const reportIds = reports.map(r => r.id);
+
+    let q = supabase
+      .from('timesheet_approvals')
+      .select(`*, employees!employee_id(full_name), approver:approved_by(full_name), reverter:reverted_by(full_name)`)
+      .in('employee_id', reportIds)
+      .order('approved_at', { ascending: false });
+
+    if (histEmpFilter !== 'all') q = q.eq('employee_id', histEmpFilter);
+    if (histStatus !== 'all')    q = q.eq('status', histStatus);
 
     const { data } = await q;
-    const map = new Map<string, EmpGroup>();
-    (data ?? []).forEach(e => {
-      const emp = e.employees as unknown as { id: string; full_name: string } | null;
-      if (!emp) return;
-      if (!map.has(emp.id)) map.set(emp.id, { empId: emp.id, name: emp.full_name, totalHours: 0, submittedHours: 0, entries: [] });
-      const g = map.get(emp.id)!;
-      g.entries.push(e as TimesheetEntry);
-      g.totalHours += Number(e.hours);
-      if (e.status === 'submitted') g.submittedHours += Number(e.hours);
+    setApprovals((data ?? []).map(r => ({
+      id:               r.id,
+      short_id:         'TS-' + r.id.replace(/-/g, '').slice(0, 8).toUpperCase(),
+      employee_id:      r.employee_id,
+      emp_name:         (r.employees as unknown as { full_name: string } | null)?.full_name ?? '—',
+      period_type:      r.period_type,
+      period_start:     r.period_start,
+      period_end:       r.period_end,
+      total_hours:      Number(r.total_hours),
+      entry_count:      r.entry_count,
+      status:           r.status,
+      notes:            r.notes,
+      approved_by_name: (r.approver as unknown as { full_name: string } | null)?.full_name ?? null,
+      approved_at:      r.approved_at,
+      reverted_by_name: (r.reverter as unknown as { full_name: string } | null)?.full_name ?? null,
+      reverted_at:      r.reverted_at ?? null,
+    })));
+    setLoadingHistory(false);
+  }, [reports, histEmpFilter, histStatus]);
+
+  useEffect(() => { if (tab === 'history' && reports.length) loadHistory(); }, [loadHistory, tab, reports]);
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+
+  const stats = useMemo(() => {
+    const submittedEmpIds = new Set(entries.filter(e => e.status === 'submitted').map(e => e.employee_id));
+    const approvedEmpIds  = new Set(entries.filter(e => e.status === 'approved').map(e => e.employee_id));
+    const hasEntriesIds   = new Set(entries.map(e => e.employee_id));
+    const notStartedEmps  = reports.filter(r => !hasEntriesIds.has(r.id));
+    return {
+      total:           reports.length,
+      submitted:       submittedEmpIds.size,
+      approved:        approvedEmpIds.size,
+      pending:         entries.filter(e => e.status === 'submitted').length,
+      notStarted:      notStartedEmps.length,
+      submittedEmpIds,
+      approvedEmpIds,
+      notStartedEmps,
+    };
+  }, [reports, entries]);
+
+  // ── Groups ────────────────────────────────────────────────────────────────
+
+  const groups = useMemo(() => {
+    const map = new Map<string, { empId: string; name: string; entries: EntryRow[]; totalHours: number; submittedHours: number }>();
+    entries.forEach(e => {
+      if (!map.has(e.employee_id))
+        map.set(e.employee_id, { empId: e.employee_id, name: e.emp_name, entries: [], totalHours: 0, submittedHours: 0 });
+      const g = map.get(e.employee_id)!;
+      g.entries.push(e);
+      g.totalHours += e.hours;
+      if (e.status === 'submitted') g.submittedHours += e.hours;
     });
-    setGroups(Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name)));
-    setLoading(false);
-  }, [tab, weekStart, myEmpId]); // eslint-disable-line react-hooks/exhaustive-deps
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [entries]);
 
-  useEffect(() => { if (myEmpId !== null) load(); }, [load, myEmpId]);
+  const filteredGroups = useMemo(() => {
+    let base = groups;
+    if (statFilter === 'submitted') base = base.filter(g => stats.submittedEmpIds.has(g.empId));
+    else if (statFilter === 'approved') base = base.filter(g => stats.approvedEmpIds.has(g.empId));
+    const q = searchQuery.trim().toLowerCase();
+    return q ? base.filter(g => g.name.toLowerCase().includes(q)) : base;
+  }, [groups, searchQuery, statFilter, stats.submittedEmpIds, stats.approvedEmpIds]);
 
-  async function approveEntry(entryId: string) {
-    setActing(entryId);
-    const supabase = createClient();
-    await supabase.from('timesheet_entries').update({
-      status: 'approved',
-      reviewed_by: myEmpId,
-      reviewed_at: new Date().toISOString(),
-    }).eq('id', entryId);
+  const notStartedFiltered = useMemo(() => {
+    if (statFilter !== 'notStarted') return [];
+    const q = searchQuery.trim().toLowerCase();
+    return q ? stats.notStartedEmps.filter(e => e.full_name.toLowerCase().includes(q)) : stats.notStartedEmps;
+  }, [statFilter, stats.notStartedEmps, searchQuery]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  async function handleApprove(empId: string, empEntries: EntryRow[]) {
+    const submitted = empEntries.filter(e => e.status === 'submitted');
+    if (!submitted.length) return;
+    setActing(empId);
+    const { start, end } = getPeriodRange(periodType, periodValue);
+    const totalHours = submitted.reduce((s, e) => s + e.hours, 0);
+    const approvalId = await approvePeriod(empId, periodType, start, end, submitted.map(e => e.id), totalHours, approvalNotes || null);
+    const shortId = 'TS-' + approvalId.replace(/-/g, '').slice(0, 8).toUpperCase();
+    setLastApproved(prev => ({ ...prev, [empId]: shortId }));
+    setApprovalNotes('');
     setActing(null);
-    load();
+    loadEntries();
   }
 
-  async function rejectEntry(entryId: string) {
-    setActing(entryId);
-    const supabase = createClient();
-    await supabase.from('timesheet_entries').update({
-      status: 'rejected',
-      reviewed_by: myEmpId,
-      reviewed_at: new Date().toISOString(),
-    }).eq('id', entryId);
+  async function handleReject(empId: string, empEntries: EntryRow[]) {
+    if (!rejectReason.trim()) return;
+    const submitted = empEntries.filter(e => e.status === 'submitted');
+    if (!submitted.length) return;
+    setActing(empId);
+    await rejectPeriod(submitted.map(e => e.id), rejectReason.trim());
+    setRejectingEmp(null);
+    setRejectReason('');
     setActing(null);
-    load();
+    loadEntries();
   }
 
-  async function approveAll(group: EmpGroup) {
-    const ids = group.entries.filter(e => e.status === 'submitted').map(e => e.id);
-    if (!ids.length) return;
-    setActing(group.empId);
-    const supabase = createClient();
-    await supabase.from('timesheet_entries').update({
-      status: 'approved',
-      reviewed_by: myEmpId,
-      reviewed_at: new Date().toISOString(),
-    }).in('id', ids);
-    setActing(null);
-    load();
+  async function handleRevert(approvalId: string) {
+    setReverting(approvalId);
+    await revertApproval(approvalId);
+    setReverting(null);
+    setRevertConfirm(null);
+    loadHistory();
   }
 
-  async function rejectAll(group: EmpGroup) {
-    const ids = group.entries.filter(e => e.status === 'submitted').map(e => e.id);
-    if (!ids.length) return;
-    setActing(group.empId + '-r');
-    const supabase = createClient();
-    await supabase.from('timesheet_entries').update({
-      status: 'rejected',
-      reviewed_by: myEmpId,
-      reviewed_at: new Date().toISOString(),
-    }).in('id', ids);
+  async function handleRevertGroup(empId: string, approvalIds: string[]) {
+    setActing(empId);
+    for (const id of approvalIds) await revertApproval(id);
+    setRevertConfirmGroup(null);
     setActing(null);
-    load();
+    loadEntries();
   }
 
-  const totalPending = groups.reduce((s, g) => s + g.entries.filter(e => e.status === 'submitted').length, 0);
+  const periodInputType = periodType === 'daily' ? 'date' : periodType === 'weekly' ? 'week' : 'month';
+  const periodLabel     = periodType === 'daily' ? 'today' : periodType === 'weekly' ? 'this week' : 'this month';
 
   const tabCls = (t: Tab) =>
     `px-4 py-2 text-sm font-semibold rounded-full transition-all ${tab === t ? 'bg-ink text-white' : 'text-gray-500 hover:text-gray-900'}`;
+  const filterBtn = (v: string, cur: string) =>
+    `px-3 py-1.5 text-xs font-semibold rounded-full border transition-all ${v === cur ? 'bg-ink text-white border-ink' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`;
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">Team Timesheets</h1>
+        <p className="text-sm text-gray-400 mt-0.5">
+          {reports.length} direct report{reports.length !== 1 ? 's' : ''}
+          {stats.pending > 0 && ` · ${stats.pending} entr${stats.pending !== 1 ? 'ies' : 'y'} awaiting review`}
+        </p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-1 bg-gray-100 rounded-full p-1 w-fit">
+        <button className={tabCls('review')}  onClick={() => setTab('review')}>Review</button>
+        <button className={tabCls('history')} onClick={() => setTab('history')}>Approval History</button>
+      </div>
+
+      {tab === 'review' && (<>
+
+      {/* Period selector */}
+      <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex flex-wrap items-end gap-4">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Team Timesheets</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            {tab === 'pending'
-              ? `${totalPending} entr${totalPending !== 1 ? 'ies' : 'y'} awaiting your review`
-              : `${groups.length} team member${groups.length !== 1 ? 's' : ''}`}
-          </p>
-        </div>
-        {tab === 'week' && (
-          <div className="flex items-center gap-2">
-            <button onClick={() => setWeekStart(w => addDays(w, -7))}
-              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">← Prev</button>
-            <span className="text-sm text-gray-600 font-medium whitespace-nowrap">
-              {weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} –{' '}
-              {weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-            </span>
-            <button onClick={() => setWeekStart(w => addDays(w, 7))}
-              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">Next →</button>
+          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Period</label>
+          <div className="flex gap-1">
+            {(['daily', 'weekly', 'monthly'] as PeriodType[]).map(t => (
+              <button key={t} onClick={() => changePeriodType(t)}
+                className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-all capitalize
+                  ${periodType === t ? 'bg-ink text-white border-ink' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}>
+                {t}
+              </button>
+            ))}
           </div>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1.5 capitalize">{periodType}</label>
+          <input type={periodInputType} value={periodValue} onChange={e => setPeriodValue(e.target.value)}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white" />
+        </div>
+      </div>
+
+      {/* Stat cards */}
+      {!loading && (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <StatCard label="Team members"    value={stats.total}      color="gray"
+              active={statFilter === null} onClick={() => setStatFilter(null)} />
+            <StatCard label="Submitted"       value={stats.submitted}  color="blue"  sub="awaiting review"
+              active={statFilter === 'submitted'} onClick={() => toggleStatFilter('submitted')} />
+            <StatCard label="Approved"        value={stats.approved}   color="green"
+              active={statFilter === 'approved'} onClick={() => toggleStatFilter('approved')} />
+            <StatCard label="Pending entries" value={stats.pending}    color="amber" sub="entries to review"
+              active={statFilter === 'submitted'} onClick={() => toggleStatFilter('submitted')} />
+            <StatCard label="Not started"     value={stats.notStarted} color={stats.notStarted > 0 ? 'red' : 'gray'} sub="no entries logged"
+              active={statFilter === 'notStarted'} onClick={() => toggleStatFilter('notStarted')} />
+          </div>
+          {statFilter && (
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <span>Showing: <strong className="text-gray-800">
+                {statFilter === 'submitted' ? 'Submitted / Pending' : statFilter === 'approved' ? 'Approved' : 'Not started'}
+              </strong></span>
+              <button onClick={() => setStatFilter(null)} className="text-gray-400 hover:text-gray-700 font-semibold">× clear</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Search */}
+      <div className="relative">
+        <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+        </svg>
+        <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search team member by name…"
+          className="w-full pl-10 pr-10 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-brand bg-white" />
+        {searchQuery && (
+          <button onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
         )}
       </div>
 
-      <div className="flex items-center gap-1 bg-gray-100 rounded-full p-1 w-fit">
-        <button className={tabCls('pending')} onClick={() => setTab('pending')}>
-          Pending Review
-          {totalPending > 0 && tab !== 'pending' && (
-            <span className="ml-1.5 bg-brand text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{totalPending}</span>
-          )}
-        </button>
-        <button className={tabCls('week')} onClick={() => setTab('week')}>By Week</button>
-      </div>
-
+      {/* Entries */}
       {loading ? (
         <div className="flex justify-center py-12">
           <div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : groups.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-gray-100 text-center py-14">
-          <p className="text-gray-400 text-sm">
-            {tab === 'pending' ? 'No timesheets awaiting your review.' : 'No timesheets for this week.'}
-          </p>
+      ) : statFilter === 'notStarted' ? (
+        notStartedFiltered.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">
+            {searchQuery ? `No team members matching "${searchQuery}"` : 'All team members have entries this period.'}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-400">{notStartedFiltered.length} team member{notStartedFiltered.length !== 1 ? 's' : ''} with no entries</p>
+            {notStartedFiltered.map(emp => (
+              <div key={emp.id} className="bg-white rounded-2xl border border-red-100 px-5 py-4 flex items-center gap-4">
+                <div className="w-9 h-9 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-sm font-bold shrink-0">
+                  {emp.full_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-gray-900">{emp.full_name}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">No entries logged this period</p>
+                </div>
+                <span className="text-xs font-semibold bg-red-50 text-red-600 px-2.5 py-1 rounded-full border border-red-100">Not started</span>
+              </div>
+            ))}
+          </div>
+        )
+      ) : filteredGroups.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">
+          {searchQuery ? `No team members matching "${searchQuery}"` : statFilter ? 'No team members in this category.' : 'No timesheet entries for this period.'}
         </div>
       ) : (
-        <div className="space-y-2">
-          {groups.map(g => {
-            const isOpen    = expanded === g.empId;
-            const submitted = g.entries.filter(e => e.status === 'submitted');
-            const isActing  = acting === g.empId || acting === g.empId + '-r';
+        <div className="space-y-3">
+          {(searchQuery || statFilter) && (
+            <p className="text-xs text-gray-400">
+              Showing {filteredGroups.length} of {groups.length} team member{groups.length !== 1 ? 's' : ''}
+            </p>
+          )}
+          {filteredGroups.map(g => {
+            const submitted        = g.entries.filter(e => e.status === 'submitted');
+            const approved         = g.entries.filter(e => e.status === 'approved');
+            const rejected         = g.entries.filter(e => e.status === 'rejected');
+            const draft            = g.entries.filter(e => e.status === 'draft');
+            const approvalIds      = [...new Set(approved.map(e => e.approval_id).filter((id): id is string => Boolean(id)))];
+            const isActing         = acting === g.empId;
+            const isRejecting      = rejectingEmp === g.empId;
+            const isRevertingGroup = revertConfirmGroup === g.empId;
+            const approvedId       = lastApproved[g.empId];
+            const isExpanded       = expandedEmps.has(g.empId);
+            const hasPending       = submitted.length > 0;
 
             return (
-              <div key={g.empId} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                <div className="px-5 py-4 flex items-center gap-4">
-                  <button className="flex-1 text-left" onClick={() => setExpanded(isOpen ? null : g.empId)}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-900">{g.name}</span>
+              <div key={g.empId} className={`bg-white rounded-2xl border overflow-hidden transition-all ${hasPending ? 'border-blue-200' : 'border-gray-100'}`}>
+
+                {/* Collapsed header */}
+                <button onClick={() => toggleExpand(g.empId)}
+                  className="w-full px-5 py-4 flex items-center gap-4 hover:bg-gray-50/50 transition-colors text-left">
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${hasPending ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                    {g.name.charAt(0).toUpperCase()}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">{g.name}</p>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                       {submitted.length > 0 && (
-                        <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
-                          {submitted.length} pending · {g.submittedHours.toFixed(1)}h
-                        </span>
+                        <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">{submitted.length} pending</span>
+                      )}
+                      {approved.length > 0 && (
+                        <span className="text-[10px] font-semibold bg-green-50 text-green-700 px-2 py-0.5 rounded-full">{approved.length} approved</span>
+                      )}
+                      {rejected.length > 0 && (
+                        <span className="text-[10px] font-semibold bg-red-50 text-red-700 px-2 py-0.5 rounded-full">{rejected.length} rejected</span>
+                      )}
+                      {draft.length > 0 && (
+                        <span className="text-[10px] font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{draft.length} draft</span>
+                      )}
+                      {approvedId && (
+                        <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">✓ {approvedId}</span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-400 mt-0.5">{g.totalHours.toFixed(1)}h total · {g.entries.length} entr{g.entries.length !== 1 ? 'ies' : 'y'}</p>
-                  </button>
+                  </div>
 
-                  {submitted.length > 0 && (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button onClick={() => approveAll(g)} disabled={isActing}
-                        className="text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg hover:bg-green-100 disabled:opacity-50 transition-colors">
-                        {acting === g.empId ? '…' : 'Approve All'}
-                      </button>
-                      <button onClick={() => rejectAll(g)} disabled={isActing}
-                        className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-100 disabled:opacity-50 transition-colors">
-                        {acting === g.empId + '-r' ? '…' : 'Reject All'}
-                      </button>
-                    </div>
-                  )}
+                  <div className="text-right shrink-0 mr-2">
+                    <p className="text-xl font-black text-gray-900 leading-none">
+                      {g.totalHours.toFixed(1)}<span className="text-sm font-semibold text-gray-400 ml-0.5">h</span>
+                    </p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{periodLabel}</p>
+                  </div>
 
-                  <button onClick={() => setExpanded(isOpen ? null : g.empId)}>
-                    <svg className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                </div>
+                  <svg className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
 
-                {isOpen && (
-                  <div className="border-t border-gray-50">
-                    <table className="w-full text-sm">
+                {/* Expanded detail */}
+                {isExpanded && (
+                  <>
+                    <table className="w-full text-sm border-t border-gray-100">
                       <thead>
                         <tr className="border-b border-gray-50 bg-gray-50/50">
                           <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Date</th>
@@ -240,46 +568,200 @@ export default function TeamTimesheetsPage() {
                           <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Hrs</th>
                           <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider hidden md:table-cell">Notes</th>
                           <th className="text-left px-5 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                          <th className="px-5 py-2" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
                         {g.entries.map(e => (
                           <tr key={e.id} className="hover:bg-gray-50/30 transition-colors">
-                            <td className="px-5 py-3 text-gray-600 whitespace-nowrap">
-                              {new Date(e.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                            </td>
-                            <td className="px-5 py-3 font-medium text-gray-900">{e.project}</td>
-                            <td className="px-5 py-3 font-semibold text-gray-700">{e.hours}h</td>
-                            <td className="px-5 py-3 text-gray-500 hidden md:table-cell">{e.notes ?? '—'}</td>
-                            <td className="px-5 py-3">
+                            <td className="px-5 py-2.5 text-gray-600 whitespace-nowrap text-xs">{displayDate(e.date)}</td>
+                            <td className="px-5 py-2.5 font-medium text-gray-900">{e.project}</td>
+                            <td className="px-5 py-2.5 font-semibold text-gray-700">{e.hours}h</td>
+                            <td className="px-5 py-2.5 text-gray-400 hidden md:table-cell text-xs">{e.notes ?? '—'}</td>
+                            <td className="px-5 py-2.5">
                               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${STATUS_STYLE[e.status]}`}>
                                 {e.status}
                               </span>
-                            </td>
-                            <td className="px-5 py-3">
-                              {e.status === 'submitted' && (
-                                <div className="flex gap-1.5 justify-end">
-                                  <button onClick={() => approveEntry(e.id)} disabled={!!acting}
-                                    className="text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-lg hover:bg-green-100 disabled:opacity-50 transition-colors">
-                                    {acting === e.id ? '…' : 'Approve'}
-                                  </button>
-                                  <button onClick={() => rejectEntry(e.id)} disabled={!!acting}
-                                    className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 px-2.5 py-1 rounded-lg hover:bg-red-100 disabled:opacity-50 transition-colors">
-                                    Reject
-                                  </button>
-                                </div>
-                              )}
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                  </div>
+
+                    {(submitted.length > 0 || approvalIds.length > 0) && (
+                      <div className="px-5 py-4 border-t border-gray-50 space-y-3">
+                        {submitted.length > 0 && (
+                          isRejecting ? (
+                            <div className="space-y-2 bg-red-50 border border-red-100 rounded-xl p-4">
+                              <label className="block text-xs font-semibold text-red-700">Rejection reason <span className="text-red-500">*</span></label>
+                              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                                rows={2} autoFocus placeholder="Explain why these entries are being rejected…"
+                                className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm focus:outline-none focus:border-red-400 bg-white resize-none" />
+                              <div className="flex gap-2">
+                                <button onClick={() => handleReject(g.empId, g.entries)} disabled={!rejectReason.trim() || isActing}
+                                  className="px-4 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-full hover:bg-red-700 disabled:opacity-50 transition-colors">
+                                  {isActing ? '…' : 'Confirm Reject'}
+                                </button>
+                                <button onClick={() => { setRejectingEmp(null); setRejectReason(''); }}
+                                  className="px-4 py-1.5 bg-white border border-gray-200 text-gray-600 text-xs font-semibold rounded-full hover:border-gray-300 transition-colors">
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap items-end gap-3">
+                              <div className="flex-1 min-w-[200px]">
+                                <label className="block text-xs font-semibold text-gray-400 mb-1">Approval note (optional)</label>
+                                <input value={approvalNotes} onChange={e => setApprovalNotes(e.target.value)}
+                                  placeholder="e.g. Reviewed and confirmed"
+                                  className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-brand" />
+                              </div>
+                              <div className="flex gap-2">
+                                <button onClick={() => handleApprove(g.empId, g.entries)} disabled={isActing}
+                                  className="px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-full hover:bg-green-700 disabled:opacity-50 transition-colors">
+                                  {isActing ? '…' : `Approve ${submitted.length > 1 ? `${submitted.length} entries` : 'entry'}`}
+                                </button>
+                                <button onClick={() => { setRejectingEmp(g.empId); setRejectReason(''); }} disabled={isActing}
+                                  className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-semibold rounded-full hover:bg-red-50 disabled:opacity-50 transition-colors">
+                                  Reject
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        )}
+
+                        {approvalIds.length > 0 && (
+                          isRevertingGroup ? (
+                            <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                              <span className="text-xs text-amber-800 font-medium flex-1">
+                                Revert {approved.length} approved entr{approved.length !== 1 ? 'ies' : 'y'}? They'll go back to submitted.
+                              </span>
+                              <button onClick={() => handleRevertGroup(g.empId, approvalIds)} disabled={isActing}
+                                className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 whitespace-nowrap">
+                                {isActing ? '…' : 'Yes, revert'}
+                              </button>
+                              <button onClick={() => setRevertConfirmGroup(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs text-gray-400">{approved.length} entr{approved.length !== 1 ? 'ies' : 'y'} approved</span>
+                              <button onClick={() => setRevertConfirmGroup(g.empId)} disabled={isActing}
+                                className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50">
+                                Revert Approval
+                              </button>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );
           })}
+        </div>
+      )}
+
+      </>)}
+
+      {/* ── HISTORY TAB ─────────────────────────────────────────────── */}
+      {tab === 'history' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-3 items-center">
+            <select value={histEmpFilter} onChange={e => setHistEmpFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white">
+              <option value="all">All team members</option>
+              {reports.map(r => <option key={r.id} value={r.id}>{r.full_name}</option>)}
+            </select>
+            <div className="flex gap-1.5">
+              {['all', 'approved', 'reverted'].map(s => (
+                <button key={s} onClick={() => setHistStatus(s)} className={filterBtn(s, histStatus)}>
+                  {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {loadingHistory ? (
+            <div className="flex justify-center py-12">
+              <div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : approvals.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">
+              No approvals found.
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50/50">
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Approval ID</th>
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Employee</th>
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Period</th>
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Hrs / Entries</th>
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider hidden lg:table-cell">Approved by</th>
+                    <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                    <th className="px-5 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {approvals.map(a => {
+                    const isReverting    = reverting === a.id;
+                    const confirmingThis = revertConfirm === a.id;
+                    return (
+                      <tr key={a.id} className={`hover:bg-gray-50/30 transition-colors ${a.status === 'reverted' ? 'opacity-60' : ''}`}>
+                        <td className="px-5 py-3.5">
+                          <span className="font-mono text-xs font-bold text-gray-900 bg-gray-100 px-2.5 py-1 rounded-lg">{a.short_id}</span>
+                          {a.notes && <p className="text-[10px] text-gray-400 mt-0.5 max-w-[120px] truncate" title={a.notes}>{a.notes}</p>}
+                        </td>
+                        <td className="px-5 py-3.5 font-medium text-gray-900">{a.emp_name}</td>
+                        <td className="px-5 py-3.5">
+                          <span className="text-gray-700">{displayPeriod(a)}</span>
+                          <p className="text-[10px] text-gray-400 mt-0.5 capitalize">{a.period_type}</p>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className="font-semibold text-gray-900">{a.total_hours.toFixed(1)}h</span>
+                          <span className="text-gray-400 text-xs ml-1">· {a.entry_count} entr{a.entry_count !== 1 ? 'ies' : 'y'}</span>
+                        </td>
+                        <td className="px-5 py-3.5 hidden lg:table-cell text-gray-500 text-xs">
+                          <p>{a.approved_by_name ?? '—'}</p>
+                          <p className="text-gray-400">{new Date(a.approved_at).toLocaleDateString()}</p>
+                          {a.reverted_at && (
+                            <p className="text-amber-600 mt-0.5">Reverted {new Date(a.reverted_at).toLocaleDateString()} by {a.reverted_by_name}</p>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${
+                            a.status === 'approved' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'
+                          }`}>
+                            {a.status}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5 text-right">
+                          {a.status === 'approved' && (
+                            confirmingThis ? (
+                              <div className="flex items-center gap-2 justify-end">
+                                <span className="text-xs text-gray-500">Revert approval?</span>
+                                <button onClick={() => handleRevert(a.id)} disabled={isReverting}
+                                  className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50">
+                                  {isReverting ? '…' : 'Yes, revert'}
+                                </button>
+                                <button onClick={() => setRevertConfirm(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setRevertConfirm(a.id)}
+                                className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition-colors">
+                                Revert
+                              </button>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
