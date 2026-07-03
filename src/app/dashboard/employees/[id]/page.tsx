@@ -20,7 +20,7 @@ export default function EditEmployeePage() {
     const supabase = createClient();
     Promise.all([
       supabase.from('employees').select('*').eq('id', id).single(),
-      supabase.from('departments').select('id, name').order('name'),
+      supabase.from('departments').select('id, name, created_at').order('name'),
       supabase.from('employees').select('id, full_name').eq('is_active', true).order('full_name'),
     ]).then(([{ data: emp }, { data: depts }, { data: mgrs }]) => {
       if (!emp) { router.push('/dashboard/employees'); return; }
