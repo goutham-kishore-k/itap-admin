@@ -15,6 +15,8 @@ export default function NewEmployeePage() {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [role, setRole] = useState('employee');
+  const managerRequired = role !== 'hr_admin';
 
   useEffect(() => {
     const supabase = createClient();
@@ -52,7 +54,8 @@ export default function NewEmployeePage() {
       </div>
       <h1 className="text-xl font-bold text-gray-900 mb-2">Add Employee</h1>
       <p className="text-sm text-gray-500 mb-6">
-        Set a temporary password and share it with the employee directly. They can change it after their first login.
+        Either set a temporary password and share it with the employee directly, or leave it blank to email them an
+        invite to set their own password instead.
       </p>
 
       {error && (
@@ -72,15 +75,14 @@ export default function NewEmployeePage() {
               <input name="email" type="email" className={inp} placeholder="jane@itaptechnologies.com" required />
             </div>
             <div>
-              <label className={lbl}>Temporary Password <span className="text-red-400">*</span></label>
+              <label className={lbl}>Temporary Password <span className="font-normal text-gray-400">(optional)</span></label>
               <div className="relative">
                 <input
                   name="password"
                   type={showPassword ? 'text' : 'password'}
                   className={inp + ' pr-16'}
-                  placeholder="Min. 6 characters"
+                  placeholder="Leave blank to email an invite instead"
                   minLength={6}
-                  required
                 />
                 <button
                   type="button"
@@ -111,7 +113,7 @@ export default function NewEmployeePage() {
             </div>
             <div>
               <label className={lbl}>Role</label>
-              <select name="role" className={inp}>
+              <select name="role" className={inp} value={role} onChange={e => setRole(e.target.value)}>
                 <option value="employee">Employee</option>
                 <option value="manager">Manager</option>
                 <option value="hr_admin">HR Admin</option>
@@ -125,9 +127,12 @@ export default function NewEmployeePage() {
               </select>
             </div>
             <div>
-              <label className={lbl}>Reports to (Manager)</label>
-              <select name="manager_id" className={inp}>
-                <option value="">— None —</option>
+              <label className={lbl}>
+                Reports to (Manager) {managerRequired && <span className="text-red-400">*</span>}
+                {!managerRequired && <span className="font-normal text-gray-400"> (optional)</span>}
+              </label>
+              <select name="manager_id" className={inp} defaultValue="" required={managerRequired}>
+                <option value="">{managerRequired ? 'Select a manager…' : '— None —'}</option>
                 {managers.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
               </select>
             </div>

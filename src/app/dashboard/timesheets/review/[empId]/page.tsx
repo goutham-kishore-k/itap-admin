@@ -56,7 +56,7 @@ function ReviewDetailInner() {
   const searchParams = useSearchParams();
   const from = searchParams.get('from') ?? '';
   const to   = searchParams.get('to') ?? '';
-  const periodType = (searchParams.get('type') ?? 'range') as 'daily' | 'weekly' | 'monthly' | 'range';
+  const periodType = (searchParams.get('type') ?? 'range') as 'daily' | 'monthly' | 'range';
   const empName = searchParams.get('name') ?? 'Employee';
 
   const [entries, setEntries] = useState<EntryRow[]>([]);
@@ -107,8 +107,9 @@ function ReviewDetailInner() {
   const spanDays = from && to
     ? Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 86400000) + 1
     : 0;
-  const isWeeklyView = spanDays > 0 && spanDays <= 7;
-  const periodNoun = periodType === 'weekly' ? 'Week' : periodType === 'monthly' ? 'Month' : 'Period';
+  // A short custom range reads better as a flat table than a full month grid.
+  const isShortView = spanDays > 0 && spanDays <= 7;
+  const periodNoun = periodType === 'monthly' ? 'Month' : 'Period';
 
   async function handleApprove() {
     if (!submitted.length) return;
@@ -188,7 +189,7 @@ function ReviewDetailInner() {
             {lastApprovedId && <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">✓ {lastApprovedId}</span>}
           </div>
 
-          {isWeeklyView ? (
+          {isShortView ? (
             <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>

@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-admin';
 import Link from 'next/link';
+import { fetchPendingSubmissions } from './timesheets/actions';
 
 function StatCard({
   label, value, sub, href, color,
@@ -42,19 +43,11 @@ function StatCard({
   );
 }
 
-function getWeekBounds(dateStr: string): { start: string; end: string; label: string } {
-  const d = new Date(dateStr + 'T12:00:00');
-  const dow = (d.getDay() + 6) % 7; // Mon=0 … Sun=6
-  const mon = new Date(d);
-  mon.setDate(d.getDate() - dow);
-  const sun = new Date(mon);
-  sun.setDate(mon.getDate() + 6);
-  const fmt = (x: Date) => x.toISOString().split('T')[0];
-  const label =
-    mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-    ' – ' +
-    sun.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  return { start: fmt(mon), end: fmt(sun), label };
+function displaySubmissionPeriod(periodType: 'monthly' | 'range', start: string, end: string): string {
+  const s = new Date(start + 'T12:00:00');
+  const e = new Date(end   + 'T12:00:00');
+  if (periodType === 'monthly') return s.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
 export default async function DashboardPage() {
@@ -62,60 +55,22 @@ export default async function DashboardPage() {
 
   const [
     { count: empCount },
-    { data: pendingEntries },
+    pendingSubmissions,
     { count: activeJobs },
     { count: newContacts },
   ] = await Promise.all([
     admin.from('employees').select('id', { count: 'exact', head: true }).eq('is_active', true),
-    admin.from('timesheet_entries')
-      .select('employee_id, date, hours, employees!employee_id(full_name)')
-      .eq('status', 'submitted')
-      .order('date', { ascending: false }),
+    fetchPendingSubmissions(),
     admin.from('career_positions').select('id', { count: 'exact', head: true }).eq('is_active', true),
     admin.from('contact_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'),
   ]);
 
-  // ── Group submitted entries by (employee × week) ──────────────────────────
-  type PersonWeek = {
-    empId: string; name: string;
-    weekStart: string; weekLabel: string;
-    totalHours: number; entryCount: number;
-  };
-  const groupMap = new Map<string, PersonWeek>();
-
-  for (const e of pendingEntries ?? []) {
-    const emp = e.employees as unknown as { full_name: string } | null;
-    const { start, label } = getWeekBounds(e.date);
-    const key = `${e.employee_id}::${start}`;
-    if (!groupMap.has(key)) {
-      groupMap.set(key, {
-        empId: e.employee_id, name: emp?.full_name ?? '—',
-        weekStart: start, weekLabel: label,
-        totalHours: 0, entryCount: 0,
-      });
-    }
-    const g = groupMap.get(key)!;
-    g.totalHours += Number(e.hours);
-    g.entryCount++;
-  }
-
-  // Sort: newest week first, then alphabetically by name
-  const allGroups = Array.from(groupMap.values())
-    .sort((a, b) => b.weekStart.localeCompare(a.weekStart) || a.name.localeCompare(b.name));
-
-  // Roll up into week buckets for display (cap at 3 weeks)
-  const weekBuckets: { weekStart: string; weekLabel: string; people: PersonWeek[] }[] = [];
-  for (const g of allGroups) {
-    const last = weekBuckets[weekBuckets.length - 1];
-    if (!last || last.weekStart !== g.weekStart) {
-      if (weekBuckets.length === 3) break;
-      weekBuckets.push({ weekStart: g.weekStart, weekLabel: g.weekLabel, people: [g] });
-    } else {
-      last.people.push(g);
-    }
-  }
-
-  const pendingEmpCount = new Set(allGroups.map(g => g.empId)).size;
+  // Newest submission first; cap the dashboard preview to a handful
+  const recentSubmissions = pendingSubmissions
+    .slice()
+    .sort((a, b) => b.periodStart.localeCompare(a.periodStart))
+    .slice(0, 6);
+  const pendingEmpCount = new Set(pendingSubmissions.map(s => s.empId)).size;
 
   return (
     <div className="space-y-7">
@@ -162,7 +117,7 @@ export default async function DashboardPage() {
       {/* Recent activity */}
       <div className="grid gap-4">
 
-        {/* Submitted timesheets — by person, grouped by week */}
+        {/* Submitted timesheets awaiting review — most recent submission first */}
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
           <div className="px-5 py-4 flex items-center justify-between border-b border-gray-50">
             <div>
@@ -176,39 +131,31 @@ export default async function DashboardPage() {
             )}
           </div>
 
-          {weekBuckets.length === 0 ? (
+          {recentSubmissions.length === 0 ? (
             <div className="px-5 py-10 text-center text-xs text-gray-400">No pending timesheets</div>
           ) : (
-            <div>
-              {weekBuckets.map(wk => (
-                <div key={wk.weekStart}>
-                  {/* Week header */}
-                  <div className="px-5 py-2 bg-gray-50/70 border-b border-gray-50 flex items-center justify-between">
-                    <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                      Week of {wk.weekLabel}
-                    </p>
-                    <span className="text-[11px] text-gray-400">
-                      {wk.people.length} {wk.people.length === 1 ? 'person' : 'people'}
-                    </span>
-                  </div>
-                  {/* People rows */}
-                  <div className="divide-y divide-gray-50">
-                    {wk.people.map(p => (
-                      <div key={p.empId} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
-                            {p.name.charAt(0).toUpperCase()}
-                          </div>
-                          <p className="text-sm font-semibold text-gray-900 truncate">{p.name}</p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-sm font-bold text-gray-900">{p.totalHours.toFixed(1)}h</p>
-                          <p className="text-[11px] text-gray-400">{p.entryCount} {p.entryCount === 1 ? 'entry' : 'entries'}</p>
-                        </div>
+            <div className="divide-y divide-gray-50">
+              {recentSubmissions.map(s => (
+                <Link key={`${s.empId}-${s.periodStart}-${s.periodEnd}`}
+                  href={`/dashboard/timesheets/review/${s.empId}?from=${s.periodStart}&to=${s.periodEnd}&type=${s.periodType}&name=${encodeURIComponent(s.empName)}`}
+                  className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
+                      {s.empName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{s.empName}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-[11px] text-gray-400 truncate">{displaySubmissionPeriod(s.periodType, s.periodStart, s.periodEnd)}</p>
+                        {s.timesheetId && <span className="text-[11px] font-mono font-bold text-gray-400">· {s.timesheetId}</span>}
                       </div>
-                    ))}
+                    </div>
                   </div>
-                </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-gray-900">{s.totalHours.toFixed(1)}h</p>
+                    <p className="text-[11px] text-gray-400">{s.entryCount} {s.entryCount === 1 ? 'entry' : 'entries'}</p>
+                  </div>
+                </Link>
               ))}
             </div>
           )}

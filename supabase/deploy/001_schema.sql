@@ -59,7 +59,7 @@ create table if not exists projects (
 create table if not exists timesheet_approvals (
   id           uuid         primary key default gen_random_uuid(),
   employee_id  uuid         not null references employees(id) on delete cascade,
-  period_type  text         not null check (period_type in ('daily', 'weekly', 'monthly', 'range')),
+  period_type  text         not null check (period_type in ('daily', 'monthly', 'range')),
   period_start date         not null,
   period_end   date         not null,
   total_hours  numeric(6,2) not null default 0,
@@ -74,12 +74,18 @@ create table if not exists timesheet_approvals (
   created_at   timestamptz  not null default now()
 );
 
+-- Weekly submissions retired — recategorize any leftover 'weekly' rows (from
+-- earlier testing; there's no real weekly data) as 'range' before the
+-- tightened constraints below, so this script stays safe to re-run.
+update timesheet_approvals set period_type = 'range' where period_type = 'weekly';
+
 -- Added after initial deploy — widen to allow custom-range approvals, matching
--- the admin dashboard's Monthly/Custom Range review support.
+-- the admin dashboard's Monthly/Custom Range review support. Narrowed again
+-- later to drop 'weekly' once the Weekly period type was retired.
 do $$ begin
   alter table timesheet_approvals drop constraint if exists timesheet_approvals_period_type_check;
   alter table timesheet_approvals add constraint timesheet_approvals_period_type_check
-    check (period_type in ('daily', 'weekly', 'monthly', 'range'));
+    check (period_type in ('daily', 'monthly', 'range'));
 end $$;
 
 -- 6. Timesheet entries (all columns from all migrations combined)
@@ -173,18 +179,25 @@ create table if not exists contact_requests (
 create table if not exists timesheets (
   id           uuid        primary key default gen_random_uuid(),
   employee_id  uuid        not null references employees(id) on delete cascade,
-  period_type  text        not null check (period_type in ('weekly', 'monthly', 'range')),
+  period_type  text        not null check (period_type in ('monthly', 'range')),
   period_start date        not null,
   period_end   date        not null,
   created_at   timestamptz not null default now(),
   unique (employee_id, period_type, period_start, period_end)
 );
 
+update timesheets set period_type = 'range' where period_type = 'weekly';
+do $$ begin
+  alter table timesheets drop constraint if exists timesheets_period_type_check;
+  alter table timesheets add constraint timesheets_period_type_check
+    check (period_type in ('monthly', 'range'));
+end $$;
+
 -- 11. Timesheet attachments (employee-uploaded supporting files, per period)
 create table if not exists timesheet_attachments (
   id            uuid        primary key default gen_random_uuid(),
   employee_id   uuid        not null references employees(id) on delete cascade,
-  period_type   text        not null check (period_type in ('weekly', 'monthly', 'range')),
+  period_type   text        not null check (period_type in ('monthly', 'range')),
   period_start  date        not null,
   period_end    date        not null,
   file_name     text        not null,
@@ -195,6 +208,13 @@ create table if not exists timesheet_attachments (
   uploaded_by   uuid        references employees(id) on delete set null,
   created_at    timestamptz not null default now()
 );
+
+update timesheet_attachments set period_type = 'range' where period_type = 'weekly';
+do $$ begin
+  alter table timesheet_attachments drop constraint if exists timesheet_attachments_period_type_check;
+  alter table timesheet_attachments add constraint timesheet_attachments_period_type_check
+    check (period_type in ('monthly', 'range'));
+end $$;
 
 -- Added after initial deploy — safe to re-run against an existing table
 alter table timesheet_attachments add column if not exists notes text;
@@ -239,13 +259,20 @@ create index if not exists timesheet_entries_timesheet_idx on timesheet_entries 
 create table if not exists timesheet_period_totals (
   id            uuid         primary key default gen_random_uuid(),
   employee_id   uuid         not null references employees(id) on delete cascade,
-  period_type   text         not null check (period_type in ('weekly', 'monthly', 'range')),
+  period_type   text         not null check (period_type in ('monthly', 'range')),
   period_start  date         not null,
   period_end    date         not null,
   total_hours   numeric(6,2) not null,
   updated_at    timestamptz  not null default now(),
   unique (employee_id, period_type, period_start, period_end)
 );
+
+update timesheet_period_totals set period_type = 'range' where period_type = 'weekly';
+do $$ begin
+  alter table timesheet_period_totals drop constraint if exists timesheet_period_totals_period_type_check;
+  alter table timesheet_period_totals add constraint timesheet_period_totals_period_type_check
+    check (period_type in ('monthly', 'range'));
+end $$;
 
 -- 12. Notifications (in-app alerts for employees — e.g. timesheet approved/rejected).
 -- Rows are only ever written by service-role server actions (approve/reject),

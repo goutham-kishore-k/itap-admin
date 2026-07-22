@@ -8,9 +8,14 @@ export default async function PortalOrgPage() {
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Use admin client for employees so RLS doesn't filter out managers/HR
+  // Use admin client for employees so RLS doesn't filter out plain employees.
+  // Only select the columns the chart actually renders — this data is shipped
+  // to every authenticated portal user's browser, so phone/hire_date/user_id
+  // (which OrgChart never displays) must not be included.
   const [{ data: employees }, { data: me }] = await Promise.all([
-    admin.from('employees').select('*, departments(name)').eq('is_active', true).order('full_name'),
+    admin.from('employees')
+      .select('id, full_name, email, designation, department_id, manager_id, role, departments(name)')
+      .eq('is_active', true).order('full_name'),
     user
       ? admin.from('employees').select('id, manager_id').eq('user_id', user.id).maybeSingle()
       : Promise.resolve({ data: null }),

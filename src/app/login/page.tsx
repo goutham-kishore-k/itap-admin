@@ -13,6 +13,8 @@ function LoginContent() {
   const [error, setError] = useState(
     searchParams.get('error') === 'link_expired'
       ? 'Your invite link has expired. Ask your HR admin to re-send the invite.'
+      : searchParams.get('error') === 'deactivated'
+      ? 'Your account has been deactivated. Contact your HR admin.'
       : ''
   );
   const [loading, setLoading] = useState(false);
@@ -30,9 +32,16 @@ function LoginContent() {
     }
     const { data: emp } = await supabase
       .from('employees')
-      .select('role')
+      .select('role, is_active')
       .eq('user_id', data.user.id)
       .maybeSingle();
+
+    if (emp && !emp.is_active) {
+      await supabase.auth.signOut();
+      setError('Your account has been deactivated. Contact your HR admin.');
+      setLoading(false);
+      return;
+    }
 
     const dest = emp?.role === 'hr_admin' || !emp ? '/dashboard' : '/portal';
     router.push(dest);

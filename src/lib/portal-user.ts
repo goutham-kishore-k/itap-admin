@@ -10,6 +10,7 @@ export const getPortalEmployee = cache(async () => {
     .from('employees')
     .select('id, full_name, role, designation, manager_id, departments(name)')
     .eq('user_id', user.id)
+    .eq('is_active', true)
     .maybeSingle();
   return data ?? null;
 });

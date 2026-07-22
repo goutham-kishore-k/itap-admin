@@ -31,18 +31,31 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Smart login redirect based on role
-  if (user && path === '/login') {
+  if (user && (path.startsWith('/dashboard') || path.startsWith('/portal') || path === '/login')) {
     const { data: emp } = await supabase
       .from('employees')
-      .select('role')
+      .select('role, is_active')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    const url = request.nextUrl.clone();
-    // No employee record yet → send to dashboard (backwards compat for existing admin)
-    url.pathname = emp?.role === 'hr_admin' || !emp ? '/dashboard' : '/portal';
-    return NextResponse.redirect(url);
+    // Deactivated employee — Supabase Auth has no idea our app deactivated
+    // them, so a valid session survives is_active flipping to false unless
+    // this check kills it here on every request, not just at sign-in.
+    if (emp && !emp.is_active) {
+      await supabase.auth.signOut();
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
+      url.searchParams.set('error', 'deactivated');
+      return NextResponse.redirect(url);
+    }
+
+    // Smart login redirect based on role
+    if (path === '/login') {
+      const url = request.nextUrl.clone();
+      // No employee record yet → send to dashboard (backwards compat for existing admin)
+      url.pathname = emp?.role === 'hr_admin' || !emp ? '/dashboard' : '/portal';
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;

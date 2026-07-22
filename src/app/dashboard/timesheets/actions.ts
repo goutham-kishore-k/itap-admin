@@ -2,6 +2,7 @@
 
 import { createAdminClient } from '@/lib/supabase-admin';
 import { requireAdminId } from '@/lib/require-admin';
+import { requireReviewerId } from '@/lib/require-reviewer';
 import { notifyEmployee } from '@/lib/notify';
 import { getOrCreateTimesheetId } from '@/lib/timesheets';
 import { shortTimesheetId } from '@/lib/timesheet-id-format';
@@ -18,7 +19,7 @@ export interface PendingSubmission {
   totalHours: number;
   periodStart: string;
   periodEnd: string;
-  periodType: 'weekly' | 'monthly' | 'range';
+  periodType: 'monthly' | 'range';
   timesheetId: string | null; // short display form (TSH-XXXXXXXX) — null for legacy batches with no linked timesheets row
 }
 
@@ -41,7 +42,7 @@ export interface ApprovalRow {
   short_id: string;       // TS-XXXXXXXX
   employee_id: string;
   emp_name: string;
-  period_type: 'daily' | 'weekly' | 'monthly' | 'range';
+  period_type: 'daily' | 'monthly' | 'range';
   period_start: string;
   period_end: string;
   total_hours: number;
@@ -110,8 +111,9 @@ function lastDayOfMonthStr(dateStr: string): string {
 }
 
 // One row per distinct submission batch — an employee can have more than one
-// pending item at once (e.g. week 1 submitted and still awaiting review, a
-// later month submitted separately while some other day is still draft).
+// pending item at once (e.g. a custom range submitted and still awaiting
+// review, a later month submitted separately while some other day is still
+// draft).
 // Batches are grouped by submitted_at: a single bulk "Submit" click stamps
 // every affected row with the exact same timestamp, so entries sharing that
 // timestamp are unambiguously one batch — regardless of how close their dates
@@ -154,10 +156,8 @@ function buildBatch(
   const sorted = rows.slice().sort((a, b) => a.date.localeCompare(b.date));
   const periodStart = sorted[0].date;
   const periodEnd = sorted[sorted.length - 1].date;
-  const spanDays = Math.round((new Date(periodEnd + 'T12:00:00').getTime() - new Date(periodStart + 'T12:00:00').getTime()) / 86400000) + 1;
   const isFullMonth = periodStart.endsWith('-01') && periodEnd === lastDayOfMonthStr(periodStart);
-  const periodType: PendingSubmission['periodType'] =
-    spanDays <= 7 ? 'weekly' : isFullMonth ? 'monthly' : 'range';
+  const periodType: PendingSubmission['periodType'] = isFullMonth ? 'monthly' : 'range';
   return {
     empId,
     empName,
@@ -289,8 +289,8 @@ async function getReviewerName(admin: ReturnType<typeof createAdminClient>, revi
   return data?.full_name ?? 'the admin team';
 }
 
-const PERIOD_TYPE_LABEL: Record<'daily' | 'weekly' | 'monthly' | 'range', string> = {
-  daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', range: 'Custom range',
+const PERIOD_TYPE_LABEL: Record<'daily' | 'monthly' | 'range', string> = {
+  daily: 'Daily', monthly: 'Monthly', range: 'Custom range',
 };
 
 // Shared "what's in this email" block for the approve/reject notification —
@@ -298,7 +298,7 @@ const PERIOD_TYPE_LABEL: Record<'daily' | 'weekly' | 'monthly' | 'range', string
 async function buildNotificationDetails(
   admin:       ReturnType<typeof createAdminClient>,
   employeeId:  string,
-  periodType:  'daily' | 'weekly' | 'monthly' | 'range',
+  periodType:  'daily' | 'monthly' | 'range',
   periodStart: string,
   periodEnd:   string,
   entryIds:    string[],
@@ -311,9 +311,9 @@ async function buildNotificationDetails(
   const projects = [...new Set((rows ?? []).map(r => r.project).filter(Boolean))];
   const hours = (rows ?? []).reduce((s, r) => s + Number(r.hours), 0);
 
-  // 'daily' predates the timesheets table (only weekly/monthly/range are
-  // valid there) and isn't produced by any current UI — guard it rather than
-  // let a stray value break the notification.
+  // 'daily' predates the timesheets table (only monthly/range are valid
+  // there) and isn't produced by any current UI — guard it rather than let a
+  // stray value break the notification.
   let timesheetId = '—';
   if (periodType !== 'daily') {
     try {
@@ -336,7 +336,7 @@ async function buildNotificationDetails(
 
 export async function approvePeriod(
   employeeId:  string,
-  periodType:  'daily' | 'weekly' | 'monthly' | 'range',
+  periodType:  'daily' | 'monthly' | 'range',
   periodStart: string,
   periodEnd:   string,
   entryIds:    string[],
@@ -344,7 +344,7 @@ export async function approvePeriod(
   notes:       string | null,
 ): Promise<string> {
   if (!entryIds.length) throw new Error('No entries to approve.');
-  const reviewerId = await requireAdminId();
+  const reviewerId = await requireReviewerId(employeeId);
   const admin      = createAdminClient();
 
   // Create the approval record
@@ -396,14 +396,14 @@ export async function approvePeriod(
 
 export async function rejectPeriod(
   employeeId:  string,
-  periodType:  'daily' | 'weekly' | 'monthly' | 'range',
+  periodType:  'daily' | 'monthly' | 'range',
   periodStart: string,
   periodEnd:   string,
   entryIds:    string[],
   reason:      string,
 ): Promise<void> {
   if (!entryIds.length) return;
-  const reviewerId = await requireAdminId();
+  const reviewerId = await requireReviewerId(employeeId);
   const admin      = createAdminClient();
   await admin
     .from('timesheet_entries')
@@ -438,7 +438,7 @@ export async function rejectPeriod(
 // was ever uploaded to this exact period, so there's nothing to fetch.
 export async function fetchAttachments(
   employeeId:  string,
-  periodType:  'daily' | 'weekly' | 'monthly' | 'range',
+  periodType:  'daily' | 'monthly' | 'range',
   periodStart: string,
   periodEnd:   string,
 ): Promise<TimesheetAttachment[]> {
@@ -478,8 +478,10 @@ export async function getAttachmentDownloadUrl(attachmentId: string): Promise<st
 }
 
 export async function revertApproval(approvalId: string): Promise<void> {
-  const reviewerId = await requireAdminId();
-  const admin      = createAdminClient();
+  const admin = createAdminClient();
+  const { data: approval } = await admin.from('timesheet_approvals').select('employee_id').eq('id', approvalId).single();
+  if (!approval) throw new Error('Approval not found.');
+  const reviewerId = await requireReviewerId(approval.employee_id);
 
   // Revert all linked entries back to submitted. Stamp a fresh submitted_at so
   // this reverted batch is treated as its own distinct pending item in the

@@ -1,6 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@/lib/supabase-admin';
+import { requireAdminId } from '@/lib/require-admin';
 
 export interface Project {
   id: string;
@@ -18,6 +19,7 @@ export interface AssignedEmployee {
 }
 
 export async function fetchProjects(): Promise<Project[]> {
+  await requireAdminId();
   const admin = createAdminClient();
   const { data } = await admin.from('projects').select('*').order('name');
   return (data ?? []) as Project[];
@@ -26,6 +28,7 @@ export async function fetchProjects(): Promise<Project[]> {
 export async function createProject(payload: {
   name: string; code?: string; client?: string; description?: string;
 }): Promise<void> {
+  await requireAdminId();
   const admin = createAdminClient();
   await admin.from('projects').insert({
     name:        payload.name.trim(),
@@ -38,6 +41,7 @@ export async function createProject(payload: {
 export async function updateProject(id: string, payload: {
   name: string; code?: string; client?: string; description?: string;
 }): Promise<void> {
+  await requireAdminId();
   const admin = createAdminClient();
   await admin.from('projects').update({
     name:        payload.name.trim(),
@@ -48,16 +52,19 @@ export async function updateProject(id: string, payload: {
 }
 
 export async function toggleProjectStatus(id: string, status: 'active' | 'inactive'): Promise<void> {
+  await requireAdminId();
   const admin = createAdminClient();
   await admin.from('projects').update({ status }).eq('id', id);
 }
 
 export async function deleteProject(id: string): Promise<void> {
+  await requireAdminId();
   const admin = createAdminClient();
   await admin.from('projects').delete().eq('id', id);
 }
 
 export async function fetchProjectAssignments(projectId: string): Promise<AssignedEmployee[]> {
+  await requireAdminId();
   const admin = createAdminClient();
   const { data } = await admin
     .from('project_assignments')
@@ -70,6 +77,7 @@ export async function fetchProjectAssignments(projectId: string): Promise<Assign
 }
 
 export async function fetchAllActiveEmployees(): Promise<{ id: string; full_name: string }[]> {
+  await requireAdminId();
   const admin = createAdminClient();
   const { data } = await admin
     .from('employees')
@@ -80,6 +88,7 @@ export async function fetchAllActiveEmployees(): Promise<{ id: string; full_name
 }
 
 export async function assignEmployee(projectId: string, employeeId: string): Promise<void> {
+  await requireAdminId();
   const admin = createAdminClient();
   await admin.from('project_assignments').upsert(
     { project_id: projectId, employee_id: employeeId },
@@ -88,6 +97,7 @@ export async function assignEmployee(projectId: string, employeeId: string): Pro
 }
 
 export async function removeAssignment(projectId: string, employeeId: string): Promise<void> {
+  await requireAdminId();
   const admin = createAdminClient();
   await admin.from('project_assignments').delete()
     .eq('project_id', projectId).eq('employee_id', employeeId);

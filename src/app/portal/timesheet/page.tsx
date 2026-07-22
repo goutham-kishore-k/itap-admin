@@ -19,11 +19,11 @@ import {
   clearPeriodTotal,
 } from './actions';
 import {
-  getWeekStart, getMonthStart, getMonthEnd, addMonths, addDays, fmt, displayDate, daySpan,
+  getMonthStart, getMonthEnd, addMonths, addDays, fmt, displayDate, daySpan,
   dayStatus, monthGridCells, DAY_CELL_STYLE, DAY_DOT_STYLE, WEEKDAY_HEADERS, type DayStatus,
 } from '@/lib/calendar-utils';
 
-type PeriodType = 'weekly' | 'monthly' | 'range';
+type PeriodType = 'monthly' | 'range';
 
 const MAX_RANGE_DAYS = 92;
 
@@ -35,7 +35,6 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 const PERIOD_TABS: { value: PeriodType; label: string }[] = [
-  { value: 'weekly',  label: 'Weekly' },
   { value: 'monthly', label: 'Monthly' },
   { value: 'range',   label: 'Custom Range' },
 ];
@@ -60,7 +59,7 @@ function initialPeriodFromParams(searchParams: URLSearchParams): { type: PeriodT
   const type  = searchParams.get('type');
   const start = searchParams.get('start');
   const end   = searchParams.get('end');
-  if (!type || !start || !end || !['weekly', 'monthly', 'range'].includes(type)) return null;
+  if (!type || !start || !end || !['monthly', 'range'].includes(type)) return null;
   return { type: type as PeriodType, start: new Date(start + 'T00:00:00'), end: new Date(end + 'T00:00:00') };
 }
 
@@ -149,8 +148,7 @@ function TimesheetPageInner() {
   }, [periodType, rangeAnchor, rangeHover, rangeMoved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const spanDays = daySpan(periodStart, periodEnd);
-  const days = Array.from({ length: spanDays }, (_, i) => addDays(periodStart, i));
-  const periodLabel = periodType === 'weekly' ? 'week' : periodType === 'monthly' ? 'month' : 'period';
+  const periodLabel = periodType === 'monthly' ? 'month' : 'period';
 
   // Default the selected day to today (if it's within the visible period) whenever
   // the month/range changes — applies to both the monthly and custom-range calendars
@@ -183,16 +181,11 @@ function TimesheetPageInner() {
     if (!confirmDiscardIfDirty()) return;
     setPeriodType(next);
     resetTransientUiState();
+    // Custom Range starts out matching the current month — the user then
+    // adjusts it via the date inputs or by dragging on the calendar.
     const today = new Date();
-    if (next === 'weekly') {
-      const s = getWeekStart(today);
-      setPeriodStart(s); setPeriodEnd(addDays(s, 6));
-    } else if (next === 'monthly') {
-      setPeriodStart(getMonthStart(today)); setPeriodEnd(getMonthEnd(today));
-    } else {
-      const s = getWeekStart(today);
-      setPeriodStart(s); setPeriodEnd(addDays(s, 6));
-    }
+    setPeriodStart(getMonthStart(today));
+    setPeriodEnd(getMonthEnd(today));
   }
 
   // Clears per-cell UI state that's tied to whatever period was on screen —
@@ -209,10 +202,7 @@ function TimesheetPageInner() {
   function goPrev() {
     if (!confirmDiscardIfDirty()) return;
     resetTransientUiState();
-    if (periodType === 'weekly') {
-      setPeriodStart(s => addDays(s, -7));
-      setPeriodEnd(e => addDays(e, -7));
-    } else if (periodType === 'monthly') {
+    if (periodType === 'monthly') {
       setPeriodStart(s => getMonthStart(addMonths(s, -1)));
       setPeriodEnd(e => getMonthEnd(addMonths(e, -1)));
     }
@@ -220,10 +210,7 @@ function TimesheetPageInner() {
   function goNext() {
     if (!confirmDiscardIfDirty()) return;
     resetTransientUiState();
-    if (periodType === 'weekly') {
-      setPeriodStart(s => addDays(s, 7));
-      setPeriodEnd(e => addDays(e, 7));
-    } else if (periodType === 'monthly') {
+    if (periodType === 'monthly') {
       setPeriodStart(s => getMonthStart(addMonths(s, 1)));
       setPeriodEnd(e => getMonthEnd(addMonths(e, 1)));
     }
@@ -701,8 +688,8 @@ function TimesheetPageInner() {
   // since a submitted/approved day shouldn't block other days in the same period.
   const periodIsLocked = entries.some(e => e.status === 'submitted' || e.status === 'approved');
 
-  // Renders a single day's entries + add/edit form. Used both for the weekly/range
-  // day-list and for the monthly view's selected-day detail panel below the calendar.
+  // Renders a single day's entries + add/edit form — the selected-day detail
+  // panel shown beside the calendar (monthly and custom-range views alike).
   function renderDayCard(day: Date) {
     const dateStr    = fmt(day);
     const dayEntries = entries.filter(e => e.date === dateStr);
@@ -1205,7 +1192,7 @@ function TimesheetPageInner() {
 
       {loading ? (
         <div className="space-y-3 animate-pulse">
-          {Array.from({ length: Math.min(days.length, 7) }).map((_, i) => (
+          {Array.from({ length: Math.min(spanDays, 7) }).map((_, i) => (
             <div key={i} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
               <div className="px-4 py-3 flex items-center justify-between bg-gray-50">
                 <div className="h-4 w-28 bg-gray-200 rounded" />
@@ -1214,7 +1201,7 @@ function TimesheetPageInner() {
             </div>
           ))}
         </div>
-      ) : periodType === 'monthly' || periodType === 'range' ? (
+      ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-start gap-4">
             {/* Fixed width so a wider cell (e.g. the quick-edit input) can never
@@ -1251,10 +1238,6 @@ function TimesheetPageInner() {
               </span>
             )}
           </div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {days.map(renderDayCard)}
         </div>
       )}
 
@@ -1403,7 +1386,7 @@ function TimesheetPageInner() {
               <button onClick={submitPeriod} disabled={submitting || periodTotal == null}
                 title={periodTotal == null ? 'Declare your total hours before submitting' : undefined}
                 className="px-5 py-2 bg-ink text-white text-sm font-semibold rounded-full hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                {submitting ? 'Submitting…' : `Submit ${periodLabel === 'week' ? 'Week' : periodLabel === 'month' ? 'Month' : 'Period'} for Approval`}
+                {submitting ? 'Submitting…' : `Submit ${periodLabel === 'month' ? 'Month' : 'Period'} for Approval`}
               </button>
               {periodTotal == null && (
                 <p className="text-sm font-medium text-amber-600">Declare total hours above to enable submitting</p>

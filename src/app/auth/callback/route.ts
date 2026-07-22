@@ -5,7 +5,11 @@ import { cookies } from 'next/headers';
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/portal';
+  // Must be an in-app relative path — new URL(next, origin) would otherwise
+  // happily resolve an absolute URL (e.g. ?next=https://evil.com) straight
+  // through to an attacker-controlled site right after a real auth exchange.
+  const rawNext = searchParams.get('next') ?? '/portal';
+  const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/portal';
 
   if (code) {
     const cookieStore = await cookies();

@@ -5,36 +5,19 @@ import { createClient } from '@/lib/supabase-browser';
 import {
   approvePeriod, rejectPeriod, revertApproval,
 } from '@/app/dashboard/timesheets/actions';
+import { fetchTeamPendingBatches, type TeamPendingBatch } from './actions';
 
 // ─── date helpers ─────────────────────────────────────────────────────────────
 
-function fmtDate(d: Date) { return d.toISOString().split('T')[0]; }
-
-function todayWeek() {
-  const d = new Date();
-  const jan4 = new Date(Date.UTC(d.getFullYear(), 0, 4));
-  const dayNum = (jan4.getUTCDay() + 6) % 7;
-  const week1Mon = new Date(jan4);
-  week1Mon.setUTCDate(jan4.getUTCDate() - dayNum);
-  const diff = d.getTime() - week1Mon.getTime();
-  const week = Math.floor(diff / 604800000) + 1;
-  return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
-}
-
-function weekValueToRange(value: string) {
-  const [yearStr, wStr] = value.split('-W');
-  const year = parseInt(yearStr), week = parseInt(wStr);
-  const jan4 = new Date(Date.UTC(year, 0, 4));
-  const dayNum = (jan4.getUTCDay() + 6) % 7;
-  const mon = new Date(jan4);
-  mon.setUTCDate(jan4.getUTCDate() - dayNum + (week - 1) * 7);
-  const sun = new Date(mon);
-  sun.setUTCDate(mon.getUTCDate() + 6);
-  return { start: fmtDate(mon), end: fmtDate(sun) };
-}
-
 function displayDate(d: string) {
   return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function displayBatchPeriod(b: TeamPendingBatch) {
+  const s = new Date(b.periodStart + 'T12:00:00');
+  const e = new Date(b.periodEnd   + 'T12:00:00');
+  if (b.periodType === 'monthly') return s.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
 function displayPeriod(row: ApprovalRow) {
@@ -47,9 +30,15 @@ function displayPeriod(row: ApprovalRow) {
   return `${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
+// A batch's own identity — an employee can have more than one pending
+// submission at once (e.g. a custom range and a separate month both awaiting
+// review), so actions/expansion state key off this, not just employee id.
+function batchKey(b: TeamPendingBatch) {
+  return `${b.empId}:${b.periodStart}:${b.periodEnd}`;
+}
+
 // ─── types ────────────────────────────────────────────────────────────────────
 
-type StatFilter = 'submitted' | 'approved' | 'notStarted' | null;
 type Tab = 'review' | 'history';
 
 interface ApprovalRow {
@@ -57,7 +46,7 @@ interface ApprovalRow {
   short_id: string;
   employee_id: string;
   emp_name: string;
-  period_type: 'daily' | 'weekly' | 'monthly';
+  period_type: 'daily' | 'monthly' | 'range';
   period_start: string;
   period_end: string;
   total_hours: number;
@@ -70,19 +59,6 @@ interface ApprovalRow {
   reverted_at: string | null;
 }
 
-interface EntryRow {
-  id: string;
-  employee_id: string;
-  emp_name: string;
-  date: string;
-  project: string;
-  hours: number;
-  notes: string | null;
-  rejection_reason: string | null;
-  status: 'draft' | 'submitted' | 'approved' | 'rejected';
-  approval_id: string | null;
-}
-
 interface DirectReport { id: string; full_name: string; }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -92,52 +68,13 @@ const STATUS_STYLE: Record<string, string> = {
   rejected:  'bg-red-50 text-red-700',
 };
 
-// ─── stat card ────────────────────────────────────────────────────────────────
-
-function StatCard({ label, value, sub, color, active, onClick }: {
-  label: string; value: number | string; sub?: string;
-  color: 'blue' | 'green' | 'amber' | 'gray' | 'red';
-  active?: boolean; onClick?: () => void;
-}) {
-  const colors = {
-    blue:  'bg-blue-50 border-blue-200 text-blue-700',
-    green: 'bg-green-50 border-green-200 text-green-700',
-    amber: 'bg-amber-50 border-amber-200 text-amber-700',
-    gray:  'bg-gray-50 border-gray-200 text-gray-500',
-    red:   'bg-red-50 border-red-200 text-red-700',
-  };
-  const rings = {
-    blue:  'ring-2 ring-blue-400 ring-offset-1',
-    green: 'ring-2 ring-green-400 ring-offset-1',
-    amber: 'ring-2 ring-amber-400 ring-offset-1',
-    gray:  'ring-2 ring-gray-400 ring-offset-1',
-    red:   'ring-2 ring-red-400 ring-offset-1',
-  };
-  return (
-    <button onClick={onClick}
-      className={`rounded-2xl border px-5 py-4 text-left w-full transition-all
-        ${colors[color]}
-        ${onClick ? 'hover:opacity-80 cursor-pointer' : 'cursor-default'}
-        ${active ? rings[color] : ''}`}>
-      <p className="text-2xl font-black">{value}</p>
-      <p className="text-xs font-semibold mt-0.5 opacity-80">{label}</p>
-      {sub && <p className="text-[10px] opacity-60 mt-0.5">{sub}</p>}
-      {active && <p className="text-[10px] font-bold mt-1 opacity-70">↓ filtering below</p>}
-    </button>
-  );
-}
-
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function TeamTimesheetsPage() {
   const [tab, setTab]                 = useState<Tab>('review');
-  const [myEmpId, setMyEmpId]         = useState<string | null>(null);
   const [reports, setReports]         = useState<DirectReport[]>([]);
-  const [entries, setEntries]         = useState<EntryRow[]>([]);
+  const [batches, setBatches]         = useState<TeamPendingBatch[]>([]);
   const [loading, setLoading]         = useState(false);
-
-  const periodType = 'weekly' as const;
-  const [periodValue, setPeriodValue] = useState(() => todayWeek());
 
   // Export modal state
   const [showExport, setShowExport]       = useState(false);
@@ -154,37 +91,30 @@ export default function TeamTimesheetsPage() {
   const [revertConfirm, setRevertConfirm] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statFilter, setStatFilter]   = useState<StatFilter>(null);
-  const [expandedEmps, setExpandedEmps] = useState<Set<string>>(new Set());
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
 
-  // Per-group action state
+  // Per-batch action state
   const [acting, setActing]               = useState<string | null>(null);
-  const [rejectingEmp, setRejectingEmp]   = useState<string | null>(null);
+  const [rejectingBatch, setRejectingBatch] = useState<string | null>(null);
   const [rejectReason, setRejectReason]   = useState('');
   const [approvalNotes, setApprovalNotes] = useState('');
   const [lastApproved, setLastApproved]   = useState<Record<string, string>>({});
-  const [revertConfirmGroup, setRevertConfirmGroup] = useState<string | null>(null);
 
-  function toggleExpand(empId: string) {
-    setExpandedEmps(prev => {
+  function toggleExpand(key: string) {
+    setExpandedBatches(prev => {
       const next = new Set(prev);
-      next.has(empId) ? next.delete(empId) : next.add(empId);
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   }
 
-  function toggleStatFilter(f: StatFilter) {
-    setStatFilter(prev => prev === f ? null : f);
-  }
-
-  // Load own employee ID + direct reports
+  // Load direct reports (for the employee filter/export dropdowns + "team members" count)
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return;
       const { data: emp } = await supabase.from('employees').select('id').eq('user_id', user.id).single();
       if (!emp) return;
-      setMyEmpId(emp.id);
       const { data: reps } = await supabase
         .from('employees').select('id, full_name')
         .eq('manager_id', emp.id).eq('is_active', true).order('full_name');
@@ -192,36 +122,17 @@ export default function TeamTimesheetsPage() {
     });
   }, []);
 
-  const loadEntries = useCallback(async () => {
-    if (!myEmpId) return;
+  const loadBatches = useCallback(async () => {
     setLoading(true);
-    const { start, end } = weekValueToRange(periodValue);
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('timesheet_entries')
-      .select('*, employees!employee_id(id, full_name)')
-      .gte('date', start).lte('date', end)
-      .neq('employee_id', myEmpId)
-      .order('date').order('created_at');
-    setEntries((data ?? []).map(e => {
-      const emp = e.employees as unknown as { id: string; full_name: string } | null;
-      return {
-        id:               e.id,
-        employee_id:      e.employee_id,
-        emp_name:         emp?.full_name ?? '(unknown)',
-        date:             e.date,
-        project:          e.project,
-        hours:            Number(e.hours),
-        notes:            e.notes ?? null,
-        rejection_reason: (e as Record<string, unknown>).rejection_reason as string | null ?? null,
-        status:           e.status,
-        approval_id:      e.approval_id ?? null,
-      };
-    }));
-    setLoading(false);
-  }, [myEmpId, periodValue]);
+    try {
+      const rows = await fetchTeamPendingBatches();
+      setBatches(rows);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  useEffect(() => { if (tab === 'review') loadEntries(); }, [loadEntries, tab]);
+  useEffect(() => { if (tab === 'review') loadBatches(); }, [loadBatches, tab]);
 
   const loadHistory = useCallback(async () => {
     if (!reports.length) return;
@@ -261,81 +172,47 @@ export default function TeamTimesheetsPage() {
 
   useEffect(() => { if (tab === 'history' && reports.length) loadHistory(); }, [loadHistory, tab, reports]);
 
-  // ── Stats ─────────────────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
 
-  const stats = useMemo(() => {
-    const submittedEmpIds = new Set(entries.filter(e => e.status === 'submitted').map(e => e.employee_id));
-    const approvedEmpIds  = new Set(entries.filter(e => e.status === 'approved').map(e => e.employee_id));
-    const hasEntriesIds   = new Set(entries.map(e => e.employee_id));
-    const notStartedEmps  = reports.filter(r => !hasEntriesIds.has(r.id));
-    return {
-      total:           reports.length,
-      submitted:       submittedEmpIds.size,
-      approved:        approvedEmpIds.size,
-      pendingApprovals: submittedEmpIds.size,
-      notStarted:      notStartedEmps.length,
-      submittedEmpIds,
-      approvedEmpIds,
-      notStartedEmps,
-    };
-  }, [reports, entries]);
-
-  // ── Groups ────────────────────────────────────────────────────────────────
-
-  const groups = useMemo(() => {
-    const map = new Map<string, { empId: string; name: string; entries: EntryRow[]; totalHours: number; submittedHours: number }>();
-    entries.forEach(e => {
-      if (!map.has(e.employee_id))
-        map.set(e.employee_id, { empId: e.employee_id, name: e.emp_name, entries: [], totalHours: 0, submittedHours: 0 });
-      const g = map.get(e.employee_id)!;
-      g.entries.push(e);
-      g.totalHours += e.hours;
-      if (e.status === 'submitted') g.submittedHours += e.hours;
-    });
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [entries]);
-
-  const filteredGroups = useMemo(() => {
-    let base = groups;
-    if (statFilter === 'submitted') base = base.filter(g => stats.submittedEmpIds.has(g.empId));
-    else if (statFilter === 'approved') base = base.filter(g => stats.approvedEmpIds.has(g.empId));
+  const filteredBatches = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return q ? base.filter(g => g.name.toLowerCase().includes(q)) : base;
-  }, [groups, searchQuery, statFilter, stats.submittedEmpIds, stats.approvedEmpIds]);
+    return q ? batches.filter(b => b.empName.toLowerCase().includes(q)) : batches;
+  }, [batches, searchQuery]);
 
-  const notStartedFiltered = useMemo(() => {
-    if (statFilter !== 'notStarted') return [];
-    const q = searchQuery.trim().toLowerCase();
-    return q ? stats.notStartedEmps.filter(e => e.full_name.toLowerCase().includes(q)) : stats.notStartedEmps;
-  }, [statFilter, stats.notStartedEmps, searchQuery]);
+  const employeesWithPending = useMemo(() => new Set(batches.map(b => b.empId)).size, [batches]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  async function handleApprove(empId: string, empEntries: EntryRow[]) {
-    const submitted = empEntries.filter(e => e.status === 'submitted');
+  async function handleApprove(batch: TeamPendingBatch) {
+    const key = batchKey(batch);
+    const submitted = batch.entries.filter(e => e.status === 'submitted');
     if (!submitted.length) return;
-    setActing(empId);
-    const { start, end } = weekValueToRange(periodValue);
-    const totalHours = submitted.reduce((s, e) => s + e.hours, 0);
-    const approvalId = await approvePeriod(empId, 'weekly', start, end, submitted.map(e => e.id), totalHours, approvalNotes || null);
+    setActing(key);
+    const approvalId = await approvePeriod(
+      batch.empId, batch.periodType, batch.periodStart, batch.periodEnd,
+      submitted.map(e => e.id), batch.totalHours, approvalNotes || null,
+    );
     const shortId = 'TS-' + approvalId.replace(/-/g, '').slice(0, 8).toUpperCase();
-    setLastApproved(prev => ({ ...prev, [empId]: shortId }));
+    setLastApproved(prev => ({ ...prev, [key]: shortId }));
     setApprovalNotes('');
     setActing(null);
-    loadEntries();
+    loadBatches();
   }
 
-  async function handleReject(empId: string, empEntries: EntryRow[]) {
+  async function handleReject(batch: TeamPendingBatch) {
     if (!rejectReason.trim()) return;
-    const submitted = empEntries.filter(e => e.status === 'submitted');
+    const key = batchKey(batch);
+    const submitted = batch.entries.filter(e => e.status === 'submitted');
     if (!submitted.length) return;
-    setActing(empId);
-    const { start, end } = weekValueToRange(periodValue);
-    await rejectPeriod(empId, 'weekly', start, end, submitted.map(e => e.id), rejectReason.trim());
-    setRejectingEmp(null);
+    setActing(key);
+    await rejectPeriod(
+      batch.empId, batch.periodType, batch.periodStart, batch.periodEnd,
+      submitted.map(e => e.id), rejectReason.trim(),
+    );
+    setRejectingBatch(null);
     setRejectReason('');
     setActing(null);
-    loadEntries();
+    loadBatches();
   }
 
   async function handleRevert(approvalId: string) {
@@ -345,16 +222,6 @@ export default function TeamTimesheetsPage() {
     setRevertConfirm(null);
     loadHistory();
   }
-
-  async function handleRevertGroup(empId: string, approvalIds: string[]) {
-    setActing(empId);
-    for (const id of approvalIds) await revertApproval(id);
-    setRevertConfirmGroup(null);
-    setActing(null);
-    loadEntries();
-  }
-
-  const periodLabel = 'this week';
 
   const tabCls = (t: Tab) =>
     `px-4 py-2 text-sm font-semibold rounded-full transition-all ${tab === t ? 'bg-ink text-white' : 'text-gray-500 hover:text-gray-900'}`;
@@ -368,7 +235,7 @@ export default function TeamTimesheetsPage() {
           <h1 className="text-xl font-bold text-gray-900">Team Timesheets</h1>
           <p className="text-sm text-gray-400 mt-0.5">
             {reports.length} direct report{reports.length !== 1 ? 's' : ''}
-            {stats.pendingApprovals > 0 && ` · ${stats.pendingApprovals} week${stats.pendingApprovals !== 1 ? 's' : ''} awaiting review`}
+            {batches.length > 0 && ` · ${batches.length} submission${batches.length !== 1 ? 's' : ''} awaiting review`}
           </p>
         </div>
         {reports.length > 0 && (
@@ -447,38 +314,22 @@ export default function TeamTimesheetsPage() {
 
       {tab === 'review' && (<>
 
-      {/* Week picker */}
-      <div className="bg-white rounded-2xl border border-gray-100 px-5 py-4 flex items-end gap-4 flex-wrap">
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1.5">Week</label>
-          <input type="week" value={periodValue} onChange={e => setPeriodValue(e.target.value)}
-            className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand bg-white" />
-        </div>
-      </div>
-
-      {/* Stat cards */}
+      {/* Simple stats — period-agnostic, since a batch is whatever an employee
+          actually submitted (any month/range), not a fixed calendar window */}
       {!loading && (
-        <div className="space-y-2">
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <StatCard label="Team members"    value={stats.total}      color="gray"
-              active={statFilter === null} onClick={() => setStatFilter(null)} />
-            <StatCard label="Submitted"       value={stats.submitted}  color="blue"  sub="awaiting review"
-              active={statFilter === 'submitted'} onClick={() => toggleStatFilter('submitted')} />
-            <StatCard label="Approved"        value={stats.approved}   color="green"
-              active={statFilter === 'approved'} onClick={() => toggleStatFilter('approved')} />
-            <StatCard label="Pending approval" value={stats.pendingApprovals} color="amber" sub="weeks awaiting review"
-              active={statFilter === 'submitted'} onClick={() => toggleStatFilter('submitted')} />
-            <StatCard label="Not started"     value={stats.notStarted} color={stats.notStarted > 0 ? 'red' : 'gray'} sub="no entries logged"
-              active={statFilter === 'notStarted'} onClick={() => toggleStatFilter('notStarted')} />
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-2xl border px-5 py-4 bg-gray-50 border-gray-200 text-gray-500">
+            <p className="text-2xl font-black">{reports.length}</p>
+            <p className="text-xs font-semibold mt-0.5 opacity-80">Team members</p>
           </div>
-          {statFilter && (
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span>Showing: <strong className="text-gray-800">
-                {statFilter === 'submitted' ? 'Submitted / Pending' : statFilter === 'approved' ? 'Approved' : 'Not started'}
-              </strong></span>
-              <button onClick={() => setStatFilter(null)} className="text-gray-400 hover:text-gray-700 font-semibold">× clear</button>
-            </div>
-          )}
+          <div className="rounded-2xl border px-5 py-4 bg-blue-50 border-blue-200 text-blue-700">
+            <p className="text-2xl font-black">{batches.length}</p>
+            <p className="text-xs font-semibold mt-0.5 opacity-80">Pending submissions</p>
+          </div>
+          <div className="rounded-2xl border px-5 py-4 bg-amber-50 border-amber-200 text-amber-700">
+            <p className="text-2xl font-black">{employeesWithPending}</p>
+            <p className="text-xs font-semibold mt-0.5 opacity-80">Members with pending items</p>
+          </div>
         </div>
       )}
 
@@ -496,7 +347,7 @@ export default function TeamTimesheetsPage() {
         )}
       </div>
 
-      {/* Entries */}
+      {/* Pending submissions */}
       {loading ? (
         <div className="space-y-3 animate-pulse">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -517,88 +368,50 @@ export default function TeamTimesheetsPage() {
             </div>
           ))}
         </div>
-      ) : statFilter === 'notStarted' ? (
-        notStartedFiltered.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">
-            {searchQuery ? `No team members matching "${searchQuery}"` : 'All team members have entries this period.'}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs text-gray-400">{notStartedFiltered.length} team member{notStartedFiltered.length !== 1 ? 's' : ''} with no entries</p>
-            {notStartedFiltered.map(emp => (
-              <div key={emp.id} className="bg-white rounded-2xl border border-red-100 px-5 py-4 flex items-center gap-4">
-                <div className="w-9 h-9 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-sm font-bold shrink-0">
-                  {emp.full_name.charAt(0).toUpperCase()}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-bold text-gray-900">{emp.full_name}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">No entries logged this period</p>
-                </div>
-                <span className="text-xs font-semibold bg-red-50 text-red-600 px-2.5 py-1 rounded-full border border-red-100">Not started</span>
-              </div>
-            ))}
-          </div>
-        )
-      ) : filteredGroups.length === 0 ? (
+      ) : filteredBatches.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 text-center py-14 text-gray-400 text-sm">
-          {searchQuery ? `No team members matching "${searchQuery}"` : statFilter ? 'No team members in this category.' : 'No timesheet entries for this period.'}
+          {searchQuery ? `No team members matching "${searchQuery}"` : 'Nothing awaiting review right now.'}
         </div>
       ) : (
         <div className="space-y-3">
-          {(searchQuery || statFilter) && (
+          {searchQuery && (
             <p className="text-xs text-gray-400">
-              Showing {filteredGroups.length} of {groups.length} team member{groups.length !== 1 ? 's' : ''}
+              Showing {filteredBatches.length} of {batches.length} submission{batches.length !== 1 ? 's' : ''}
             </p>
           )}
-          {filteredGroups.map(g => {
-            const submitted        = g.entries.filter(e => e.status === 'submitted');
-            const approved         = g.entries.filter(e => e.status === 'approved');
-            const rejected         = g.entries.filter(e => e.status === 'rejected');
-            const draft            = g.entries.filter(e => e.status === 'draft');
-            const approvalIds      = [...new Set(approved.map(e => e.approval_id).filter((id): id is string => Boolean(id)))];
-            const isActing         = acting === g.empId;
-            const isRejecting      = rejectingEmp === g.empId;
-            const isRevertingGroup = revertConfirmGroup === g.empId;
-            const approvedId       = lastApproved[g.empId];
-            const isExpanded       = expandedEmps.has(g.empId);
-            const hasPending       = submitted.length > 0;
+          {filteredBatches.map(b => {
+            const key             = batchKey(b);
+            const isActing        = acting === key;
+            const isRejecting     = rejectingBatch === key;
+            const isExpanded      = expandedBatches.has(key);
+            const approvedShortId = lastApproved[key];
 
             return (
-              <div key={g.empId} className={`bg-white rounded-2xl border overflow-hidden transition-all ${hasPending ? 'border-blue-200' : 'border-gray-100'}`}>
+              <div key={key} className="bg-white rounded-2xl border border-blue-200 overflow-hidden transition-all">
 
                 {/* Collapsed header */}
-                <button onClick={() => toggleExpand(g.empId)}
+                <button onClick={() => toggleExpand(key)}
                   className="w-full px-5 py-4 flex items-center gap-4 hover:bg-gray-50/50 transition-colors text-left">
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${hasPending ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                    {g.name.charAt(0).toUpperCase()}
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 bg-blue-100 text-blue-700">
+                    {b.empName.charAt(0).toUpperCase()}
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 truncate">{g.name}</p>
+                    <p className="text-sm font-bold text-gray-900 truncate">{b.empName}</p>
                     <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      {submitted.length > 0 && (
-                        <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">{submitted.length} pending</span>
-                      )}
-                      {approved.length > 0 && (
-                        <span className="text-[10px] font-semibold bg-green-50 text-green-700 px-2 py-0.5 rounded-full">{approved.length} approved</span>
-                      )}
-                      {rejected.length > 0 && (
-                        <span className="text-[10px] font-semibold bg-red-50 text-red-700 px-2 py-0.5 rounded-full">{rejected.length} rejected</span>
-                      )}
-                      {draft.length > 0 && (
-                        <span className="text-[10px] font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{draft.length} draft</span>
-                      )}
-                      {approvedId && (
-                        <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">✓ {approvedId}</span>
+                      <span className="text-[10px] font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full capitalize">{b.periodType}</span>
+                      <span className="text-[10px] text-gray-400">{displayBatchPeriod(b)}</span>
+                      {approvedShortId && (
+                        <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">✓ {approvedShortId}</span>
                       )}
                     </div>
                   </div>
 
                   <div className="text-right shrink-0 mr-2">
                     <p className="text-xl font-black text-gray-900 leading-none">
-                      {g.totalHours.toFixed(1)}<span className="text-sm font-semibold text-gray-400 ml-0.5">h</span>
+                      {b.totalHours.toFixed(1)}<span className="text-sm font-semibold text-gray-400 ml-0.5">h</span>
                     </p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">{periodLabel}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{b.entries.length} entr{b.entries.length !== 1 ? 'ies' : 'y'}</p>
                   </div>
 
                   <svg className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
@@ -622,7 +435,7 @@ export default function TeamTimesheetsPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        {g.entries.map(e => (
+                        {b.entries.map(e => (
                           <tr key={e.id} className="hover:bg-gray-50/30 transition-colors">
                             <td className="px-5 py-2.5 text-gray-600 whitespace-nowrap text-xs">{displayDate(e.date)}</td>
                             <td className="px-5 py-2.5 font-medium text-gray-900">{e.project}</td>
@@ -639,72 +452,45 @@ export default function TeamTimesheetsPage() {
                     </table>
                     </div>
 
-                    {(submitted.length > 0 || approvalIds.length > 0) && (
-                      <div className="px-5 py-4 border-t border-gray-50 space-y-3">
-                        {submitted.length > 0 && (
-                          isRejecting ? (
-                            <div className="space-y-2 bg-red-50 border border-red-100 rounded-xl p-4">
-                              <label className="block text-xs font-semibold text-red-700">Rejection reason <span className="text-red-500">*</span></label>
-                              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
-                                rows={2} autoFocus placeholder="Explain why these entries are being rejected…"
-                                className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm focus:outline-none focus:border-red-400 bg-white resize-none" />
-                              <div className="flex gap-2">
-                                <button onClick={() => handleReject(g.empId, g.entries)} disabled={!rejectReason.trim() || isActing}
-                                  className="px-4 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-full hover:bg-red-700 disabled:opacity-50 transition-colors">
-                                  {isActing ? '…' : 'Confirm Reject'}
-                                </button>
-                                <button onClick={() => { setRejectingEmp(null); setRejectReason(''); }}
-                                  className="px-4 py-1.5 bg-white border border-gray-200 text-gray-600 text-xs font-semibold rounded-full hover:border-gray-300 transition-colors">
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap items-end gap-3">
-                              <div className="flex-1 min-w-[200px]">
-                                <label className="block text-xs font-semibold text-gray-400 mb-1">Approval note (optional)</label>
-                                <input value={approvalNotes} onChange={e => setApprovalNotes(e.target.value)}
-                                  placeholder="e.g. Reviewed and confirmed"
-                                  className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-brand" />
-                              </div>
-                              <div className="flex gap-2">
-                                <button onClick={() => handleApprove(g.empId, g.entries)} disabled={isActing}
-                                  className="px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-full hover:bg-green-700 disabled:opacity-50 transition-colors">
-                                  {isActing ? '…' : 'Approve Week'}
-                                </button>
-                                <button onClick={() => { setRejectingEmp(g.empId); setRejectReason(''); }} disabled={isActing}
-                                  className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-semibold rounded-full hover:bg-red-50 disabled:opacity-50 transition-colors">
-                                  Reject Week
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        )}
-
-                        {approvalIds.length > 0 && (
-                          isRevertingGroup ? (
-                            <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-                              <span className="text-xs text-amber-800 font-medium flex-1">
-                                Revert {approved.length} approved entr{approved.length !== 1 ? 'ies' : 'y'}? They'll go back to submitted.
-                              </span>
-                              <button onClick={() => handleRevertGroup(g.empId, approvalIds)} disabled={isActing}
-                                className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:opacity-50 whitespace-nowrap">
-                                {isActing ? '…' : 'Yes, revert'}
-                              </button>
-                              <button onClick={() => setRevertConfirmGroup(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-3">
-                              <span className="text-xs text-gray-400">{approved.length} entr{approved.length !== 1 ? 'ies' : 'y'} approved</span>
-                              <button onClick={() => setRevertConfirmGroup(g.empId)} disabled={isActing}
-                                className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50">
-                                Revert Approval
-                              </button>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    )}
+                    <div className="px-5 py-4 border-t border-gray-50 space-y-3">
+                      {isRejecting ? (
+                        <div className="space-y-2 bg-red-50 border border-red-100 rounded-xl p-4">
+                          <label className="block text-xs font-semibold text-red-700">Rejection reason <span className="text-red-500">*</span></label>
+                          <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                            rows={2} autoFocus placeholder="Explain why these entries are being rejected…"
+                            className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm focus:outline-none focus:border-red-400 bg-white resize-none" />
+                          <div className="flex gap-2">
+                            <button onClick={() => handleReject(b)} disabled={!rejectReason.trim() || isActing}
+                              className="px-4 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-full hover:bg-red-700 disabled:opacity-50 transition-colors">
+                              {isActing ? '…' : 'Confirm Reject'}
+                            </button>
+                            <button onClick={() => { setRejectingBatch(null); setRejectReason(''); }}
+                              className="px-4 py-1.5 bg-white border border-gray-200 text-gray-600 text-xs font-semibold rounded-full hover:border-gray-300 transition-colors">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="flex-1 min-w-[200px]">
+                            <label className="block text-xs font-semibold text-gray-400 mb-1">Approval note (optional)</label>
+                            <input value={approvalNotes} onChange={e => setApprovalNotes(e.target.value)}
+                              placeholder="e.g. Reviewed and confirmed"
+                              className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-brand" />
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => handleApprove(b)} disabled={isActing}
+                              className="px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-full hover:bg-green-700 disabled:opacity-50 transition-colors">
+                              {isActing ? '…' : 'Approve'}
+                            </button>
+                            <button onClick={() => { setRejectingBatch(key); setRejectReason(''); }} disabled={isActing}
+                              className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-semibold rounded-full hover:bg-red-50 disabled:opacity-50 transition-colors">
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </div>

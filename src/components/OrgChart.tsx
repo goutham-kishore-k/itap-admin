@@ -1,14 +1,23 @@
 'use client';
 
 import { useState } from 'react';
-import type { Employee } from '@/types';
 
-interface OrgNode extends Employee {
-  children: OrgNode[];
+export interface OrgChartEmployee {
+  id: string;
+  full_name: string;
+  email: string | null;
+  designation: string | null;
+  department_id: string | null;
+  manager_id: string | null;
+  role: 'employee' | 'manager' | 'hr_admin';
   dept_name?: string;
 }
 
-function buildTree(employees: (Employee & { dept_name?: string })[]) {
+interface OrgNode extends OrgChartEmployee {
+  children: OrgNode[];
+}
+
+function buildTree(employees: OrgChartEmployee[]) {
   const map = new Map<string, OrgNode>();
   employees.forEach(e => map.set(e.id, { ...e, children: [] }));
   const roots: OrgNode[] = [];
@@ -136,7 +145,7 @@ export default function OrgChart({
   currentEmpId,
   currentManagerId,
 }: {
-  employees: (Employee & { dept_name?: string })[];
+  employees: OrgChartEmployee[];
   currentEmpId?: string;
   currentManagerId?: string;
 }) {

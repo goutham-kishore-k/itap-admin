@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
+import { updateMyPhone } from './actions';
 import type { Employee } from '@/types';
 
 export default function ProfilePage() {
@@ -10,6 +11,7 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
+  const [phoneErr, setPhoneErr] = useState('');
 
   // Password change
   const [newPassword, setNewPassword] = useState('');
@@ -47,8 +49,13 @@ export default function ProfilePage() {
   async function savePhone() {
     if (!employee) return;
     setSaving(true);
-    const supabase = createClient();
-    await supabase.from('employees').update({ phone: phone.trim() || null }).eq('id', employee.id);
+    setPhoneErr('');
+    const { error } = await updateMyPhone(phone);
+    if (error) {
+      setPhoneErr(error);
+      setSaving(false);
+      return;
+    }
     setEmployee(e => e ? { ...e, phone: phone.trim() || null } : e);
     setSaving(false);
     setEditing(false);
@@ -145,16 +152,19 @@ export default function ProfilePage() {
           <div className="px-6 py-3.5 flex items-center justify-between">
             <span className="text-sm text-gray-400 font-medium w-28 shrink-0">Phone</span>
             {editing ? (
-              <div className="flex items-center gap-2">
-                <input value={phone} onChange={e => setPhone(e.target.value)}
-                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand w-40"
-                  placeholder="+1 555 000 0000" />
-                <button onClick={savePhone} disabled={saving}
-                  className="text-xs font-semibold text-white bg-brand px-3 py-1.5 rounded-lg hover:bg-brand-dark disabled:opacity-60 transition-colors">
-                  {saving ? '…' : 'Save'}
-                </button>
-                <button onClick={() => { setEditing(false); setPhone(employee.phone ?? ''); }}
-                  className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Cancel</button>
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="flex items-center gap-2">
+                  <input value={phone} onChange={e => setPhone(e.target.value)}
+                    className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-brand w-40"
+                    placeholder="+1 555 000 0000" />
+                  <button onClick={savePhone} disabled={saving}
+                    className="text-xs font-semibold text-white bg-brand px-3 py-1.5 rounded-lg hover:bg-brand-dark disabled:opacity-60 transition-colors">
+                    {saving ? '…' : 'Save'}
+                  </button>
+                  <button onClick={() => { setEditing(false); setPhone(employee.phone ?? ''); setPhoneErr(''); }}
+                    className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Cancel</button>
+                </div>
+                {phoneErr && <p className="text-xs text-red-600">{phoneErr}</p>}
               </div>
             ) : (
               <div className="flex items-center gap-3">

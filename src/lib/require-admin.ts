@@ -11,7 +11,7 @@ export async function requireAdminId(): Promise<string> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated.');
   const admin = createAdminClient();
-  const { data } = await admin.from('employees').select('id, role').eq('user_id', user.id).single();
-  if (!data || data.role !== 'hr_admin') throw new Error('Not authorized.');
+  const { data } = await admin.from('employees').select('id, role, is_active').eq('user_id', user.id).single();
+  if (!data || data.role !== 'hr_admin' || !data.is_active) throw new Error('Not authorized.');
   return data.id;
 }

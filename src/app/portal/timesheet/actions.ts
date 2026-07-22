@@ -108,7 +108,7 @@ export async function uploadTimesheetAttachment(formData: FormData): Promise<Tim
   if (!file || file.size === 0) throw new Error('Please choose a file.');
   if (file.size > MAX_ATTACHMENT_BYTES) throw new Error('File is too large (10MB max).');
   if (!ALLOWED_MIME_TYPES.includes(file.type)) throw new Error('Unsupported file type. Use PDF, PNG, JPG, or TXT.');
-  if (!['weekly', 'monthly', 'range'].includes(periodType)) throw new Error('Invalid period type.');
+  if (!['monthly', 'range'].includes(periodType)) throw new Error('Invalid period type.');
   if (!periodStart || !periodEnd) throw new Error('Invalid period range.');
 
   const admin = createAdminClient();
@@ -302,7 +302,7 @@ export async function clearPeriodTotal(
 
 export interface MySubmission {
   timesheetId: string | null; // short display form (TSH-XXXXXXXX)
-  periodType:  'weekly' | 'monthly' | 'range';
+  periodType:  'monthly' | 'range';
   periodStart: string;
   periodEnd:   string;
   status:      'draft' | 'submitted' | 'approved' | 'rejected' | 'mixed';
@@ -373,9 +373,8 @@ export async function fetchMySubmissions(): Promise<MySubmission[]> {
       const sorted = rows.slice().sort((a, b) => a.date.localeCompare(b.date));
       periodStart = sorted[0].date;
       periodEnd = sorted[sorted.length - 1].date;
-      const spanDays = Math.round((new Date(periodEnd + 'T12:00:00').getTime() - new Date(periodStart + 'T12:00:00').getTime()) / 86400000) + 1;
       const isFullMonth = periodStart.endsWith('-01') && periodEnd === lastDayOfMonthStr(periodStart);
-      periodType = spanDays <= 7 ? 'weekly' : isFullMonth ? 'monthly' : 'range';
+      periodType = isFullMonth ? 'monthly' : 'range';
     }
 
     const statuses = new Set(rows.map(r => r.status));

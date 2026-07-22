@@ -1,8 +1,10 @@
 'use server';
 
 import { createAdminClient } from '@/lib/supabase-admin';
+import { requireAdminId } from '@/lib/require-admin';
 
 export async function fetchNavCounts(): Promise<{ requests: number; timesheets: number; contacts: number }> {
+  await requireAdminId();
   const admin = createAdminClient();
   const [{ count: rc }, { data: tsRows }, { count: cc }] = await Promise.all([
     admin.from('hr_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),

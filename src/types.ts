@@ -69,7 +69,7 @@ export interface TimesheetEntry {
 export interface TimesheetApproval {
   id: string;
   employee_id: string;
-  period_type: 'daily' | 'weekly' | 'monthly' | 'range';
+  period_type: 'daily' | 'monthly' | 'range';
   period_start: string;
   period_end: string;
   total_hours: number;
@@ -87,7 +87,7 @@ export interface TimesheetAttachment {
   id: string;
   employee_id: string;
   timesheet_id: string;
-  period_type: 'weekly' | 'monthly' | 'range';
+  period_type: 'monthly' | 'range';
   period_start: string;
   period_end: string;
   file_name: string;
@@ -102,7 +102,7 @@ export interface TimesheetAttachment {
 export interface TimesheetPeriodTotal {
   id: string;
   employee_id: string;
-  period_type: 'weekly' | 'monthly' | 'range';
+  period_type: 'monthly' | 'range';
   period_start: string;
   period_end: string;
   total_hours: number;

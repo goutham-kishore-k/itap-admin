@@ -35,7 +35,6 @@ function displaySubmissionRange(p: PendingSubmission) {
 type Tab = 'review' | 'history';
 
 const PERIOD_TYPE_BADGE: Record<PendingSubmission['periodType'], string> = {
-  weekly:  'bg-blue-50 text-blue-700',
   monthly: 'bg-purple-50 text-purple-700',
   range:   'bg-amber-50 text-amber-700',
 };
