@@ -72,7 +72,7 @@ interface NavItemDef {
 const HR_NAV: NavItemDef[] = [
   { href: '/dashboard/employees', label: 'Employees',   icon: ICONS.employees  },
   { href: '/dashboard/timesheets',label: 'Timesheets',  icon: ICONS.timesheets, badge: 'timesheets' },
-  { href: '/dashboard/requests',  label: 'HR Requests', icon: ICONS.requests,   badge: 'requests'   },
+  // HR Requests tab hidden for now — re-add { href: '/dashboard/requests', label: 'HR Requests', icon: ICONS.requests, badge: 'requests' } when ready.
   { href: '/dashboard/projects',  label: 'Projects',    icon: ICONS.projects   },
   { href: '/dashboard/org',       label: 'Org Chart',   icon: ICONS.org        },
 ];

@@ -2,13 +2,12 @@ import { getPortalEmployee } from '@/lib/portal-user';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import Link from 'next/link';
-
-const REQUEST_STATUS_BADGE: Record<string, string> = {
-  pending:  'bg-amber-50 text-amber-700',
-  approved: 'bg-green-50 text-green-700',
-  rejected: 'bg-red-50 text-red-700',
-  closed:   'bg-gray-100 text-gray-500',
-};
+import NotificationsPanel from '@/components/NotificationsPanel';
+import type { Notification } from '@/types';
+import {
+  getMonthStart, getMonthEnd, fmt, dayStatus, monthGridCells,
+  DAY_CELL_STYLE, DAY_DOT_STYLE, WEEKDAY_HEADERS, type DayStatus,
+} from '@/lib/calendar-utils';
 
 export default async function PortalHomePage() {
   const employee = await getPortalEmployee();
@@ -28,28 +27,33 @@ export default async function PortalHomePage() {
     return d.toISOString().split('T')[0];
   })();
 
+  const monthAnchor = new Date();
+  const monthStart  = fmt(getMonthStart(monthAnchor));
+  const monthEnd    = fmt(getMonthEnd(monthAnchor));
+
   const [
     { data: weekEntries },
-    { count: pendingReqs },
-    { data: recentRequests },
     { data: manager },
+    { data: monthEntries },
+    { data: notifications },
   ] = await Promise.all([
     supabase.from('timesheet_entries')
       .select('hours, status')
       .eq('employee_id', employee.id).gte('date', weekStart).lte('date', weekEnd),
-    supabase.from('hr_requests')
-      .select('id', { count: 'exact', head: true })
-      .eq('employee_id', employee.id).eq('status', 'pending'),
-    supabase.from('hr_requests')
-      .select('id, type, title, status, created_at')
-      .eq('employee_id', employee.id)
-      .order('created_at', { ascending: false }).limit(5),
     (employee as unknown as { manager_id?: string }).manager_id
       ? admin.from('employees')
           .select('full_name, designation')
           .eq('id', (employee as unknown as { manager_id: string }).manager_id)
           .single()
       : Promise.resolve({ data: null }),
+    supabase.from('timesheet_entries')
+      .select('date, hours, status')
+      .eq('employee_id', employee.id).gte('date', monthStart).lte('date', monthEnd),
+    supabase.from('notifications')
+      .select('*')
+      .eq('employee_id', employee.id)
+      .order('created_at', { ascending: false })
+      .limit(15),
   ]);
 
   const weekHours = (weekEntries ?? []).reduce((s, e) => s + Number(e.hours), 0);
@@ -62,9 +66,6 @@ export default async function PortalHomePage() {
     statuses.some(s => s === 'submitted')        ? 'submitted' :
     'draft';
 
-  const tsStatusBadge: Record<string, string> = {
-    none: 'text-gray-400', draft: 'text-amber-600', submitted: 'text-blue-600', approved: 'text-green-600',
-  };
   const tsStatusLabel: Record<string, string> = {
     none: 'No entries yet', draft: 'In progress', submitted: 'Submitted', approved: 'Approved',
   };
@@ -85,44 +86,74 @@ export default async function PortalHomePage() {
         </p>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">This week</p>
-          <p className="text-3xl font-black text-gray-900 mt-1 tracking-tight">{weekHours.toFixed(1)}h</p>
-          <p className={`text-xs font-semibold mt-1 ${tsStatusBadge[tsWeekStatus]}`}>
-            {tsStatusLabel[tsWeekStatus]}
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl border border-gray-100 p-5">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Requests</p>
-          <p className="text-3xl font-black text-gray-900 mt-1 tracking-tight">{pendingReqs ?? 0}</p>
-          <p className="text-xs text-gray-400 mt-1">pending</p>
-        </div>
+      {/* This week — Requests card hidden for now (re-add as a grid-cols-2 sibling when ready) */}
+      <div className="grid grid-cols-1 gap-3">
+        <Link href="/portal/timesheet"
+          className="bg-brand text-white rounded-2xl p-5 hover:bg-brand-dark transition-colors">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-semibold text-white/70 uppercase tracking-wider">This week</p>
+            <svg className="w-5 h-5 text-white/70 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <p className="text-3xl font-black mt-1 tracking-tight">{weekHours.toFixed(1)}h</p>
+          <p className="text-xs font-semibold mt-1 text-white/90">{tsStatusLabel[tsWeekStatus]}</p>
+        </Link>
       </div>
 
-      {/* Quick actions */}
-      <div className="grid grid-cols-2 gap-3">
-        <Link href="/portal/timesheet"
-          className="flex items-center gap-3 bg-brand text-white rounded-2xl p-4 hover:bg-brand-dark transition-colors">
-          <svg className="w-6 h-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          <div>
-            <p className="font-semibold text-sm">Timesheet</p>
-            <p className="text-white/70 text-xs">Log your hours</p>
+      {/* This month calendar + notifications */}
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 w-full max-w-lg shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-bold text-gray-900 text-sm">
+              {monthAnchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </p>
+            <Link href="/portal/timesheet" className="text-xs text-brand font-semibold hover:underline">Open timesheet</Link>
           </div>
-        </Link>
-        <Link href="/portal/requests/new"
-          className="flex items-center gap-3 bg-white border border-gray-100 rounded-2xl p-4 hover:border-gray-200 transition-colors">
-          <svg className="w-6 h-6 shrink-0 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          <div>
-            <p className="font-semibold text-sm text-gray-900">New Request</p>
-            <p className="text-gray-400 text-xs">Leave, expense & more</p>
+          <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+            {WEEKDAY_HEADERS.map(w => (
+              <div key={w} className="text-center text-[10px] font-semibold text-gray-400 uppercase tracking-wide py-1">{w}</div>
+            ))}
           </div>
-        </Link>
+          <div className="grid grid-cols-7 gap-1.5">
+            {monthGridCells(monthAnchor).map(cell => {
+              const cellStr     = fmt(cell);
+              const inMonth     = cellStr >= monthStart && cellStr <= monthEnd;
+              const cellEntries = inMonth ? (monthEntries ?? []).filter(e => e.date === cellStr) : [];
+              const cStatus     = dayStatus(cellEntries);
+              const isToday     = fmt(new Date()) === cellStr;
+              const cellHours   = cellEntries.reduce((s, e) => s + Number(e.hours), 0);
+              return (
+                <Link
+                  key={cellStr}
+                  href="/portal/timesheet"
+                  className={`relative aspect-square rounded-lg border p-1.5 flex flex-col items-start transition-colors ${
+                    !inMonth ? 'opacity-0 pointer-events-none' : `${DAY_CELL_STYLE[cStatus]} hover:border-brand/50`
+                  }`}>
+                  <span className={`text-[11px] font-semibold ${isToday ? 'text-brand' : 'text-gray-600'}`}>
+                    {cell.getDate()}
+                  </span>
+                  {inMonth && cStatus !== 'empty' && (
+                    <span className="mt-auto flex items-center gap-1">
+                      <span className={`w-1.5 h-1.5 rounded-full ${DAY_DOT_STYLE[cStatus]}`} />
+                      <span className="text-sm font-bold text-gray-700">{cellHours}h</span>
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-50 flex-wrap">
+            {(['empty', 'draft', 'submitted', 'approved', 'rejected'] as DayStatus[]).map(s => (
+              <span key={s} className="flex items-center gap-1.5 text-[10px] text-gray-400 capitalize">
+                <span className={`w-1.5 h-1.5 rounded-full ${DAY_DOT_STYLE[s]}`} />
+                {s === 'empty' ? 'No entry' : s}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <NotificationsPanel initial={(notifications ?? []) as Notification[]} />
       </div>
 
       {/* Manager info */}
@@ -139,31 +170,6 @@ export default async function PortalHomePage() {
             {(manager as unknown as { designation?: string }).designation && (
               <p className="text-xs text-gray-400 truncate">{(manager as unknown as { designation: string }).designation}</p>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Recent requests */}
-      {(recentRequests ?? []).length > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-            <h2 className="font-bold text-gray-900 text-sm">Recent Requests</h2>
-            <Link href="/portal/requests" className="text-xs text-brand font-semibold hover:underline">View all</Link>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {(recentRequests ?? []).map(r => (
-              <div key={r.id} className="px-5 py-3.5 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 truncate">{r.title}</p>
-                  <p className="text-xs text-gray-400 capitalize mt-0.5">
-                    {r.type} · {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </p>
-                </div>
-                <span className={`shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${REQUEST_STATUS_BADGE[r.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                  {r.status}
-                </span>
-              </div>
-            ))}
           </div>
         </div>
       )}

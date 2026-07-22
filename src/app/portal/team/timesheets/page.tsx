@@ -330,7 +330,8 @@ export default function TeamTimesheetsPage() {
     const submitted = empEntries.filter(e => e.status === 'submitted');
     if (!submitted.length) return;
     setActing(empId);
-    await rejectPeriod(submitted.map(e => e.id), rejectReason.trim());
+    const { start, end } = weekValueToRange(periodValue);
+    await rejectPeriod(empId, 'weekly', start, end, submitted.map(e => e.id), rejectReason.trim());
     setRejectingEmp(null);
     setRejectReason('');
     setActing(null);

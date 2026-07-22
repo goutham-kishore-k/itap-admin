@@ -52,26 +52,30 @@ function ChevronRight() {
 
 // ─── nav definitions ──────────────────────────────────────────────────────────
 
+// Timesheet opens straight into the list ("My Timesheets") — starting a new
+// submission is a button on that page, not a separate nav destination.
+// activePrefix keeps the nav item highlighted while on either page under
+// /portal/timesheet, even though it links to the /history one specifically.
 const NAV_ME = [
-  { href: '/portal',           label: 'Home',      icon: ICONS.home,      exact: true  },
-  { href: '/portal/timesheet', label: 'Timesheet', icon: ICONS.timesheet, exact: false },
-  { href: '/portal/requests',  label: 'Requests',  icon: ICONS.requests,  exact: false },
-  { href: '/portal/org',       label: 'Org Chart', icon: ICONS.org,       exact: false },
-  { href: '/portal/profile',   label: 'Profile',   icon: ICONS.profile,   exact: false },
+  { href: '/portal',                   label: 'Home',      icon: ICONS.home,      exact: true },
+  { href: '/portal/timesheet/history', label: 'Timesheet', icon: ICONS.timesheet, exact: false, activePrefix: '/portal/timesheet' },
+  // Requests tab hidden for now — re-add { href: '/portal/requests', label: 'Requests', icon: ICONS.requests, exact: false } when ready.
+  { href: '/portal/org',     label: 'Org Chart', icon: ICONS.org,     exact: false },
+  { href: '/portal/profile', label: 'Profile',   icon: ICONS.profile, exact: false },
 ];
 
 const NAV_TEAM = [
   { href: '/portal/team/timesheets', label: 'Timesheets', icon: ICONS.timesheet, badge: 'timesheets' as const },
-  { href: '/portal/team/requests',   label: 'Requests',   icon: ICONS.requests,  badge: 'requests'   as const },
+  // Requests tab hidden for now — re-add { href: '/portal/team/requests', label: 'Requests', icon: ICONS.requests, badge: 'requests' as const } when ready.
 ];
 
 // ─── link components ──────────────────────────────────────────────────────────
 
-function SidebarLink({ href, label, icon, exact, badge, collapsed }: {
-  href: string; label: string; icon: React.ReactNode; exact?: boolean; badge?: number; collapsed: boolean;
+function SidebarLink({ href, label, icon, exact, badge, collapsed, activePrefix }: {
+  href: string; label: string; icon: React.ReactNode; exact?: boolean; badge?: number; collapsed: boolean; activePrefix?: string;
 }) {
   const pathname = usePathname();
-  const active = exact ? pathname === href : pathname.startsWith(href);
+  const active = exact ? pathname === href : pathname.startsWith(activePrefix ?? href);
   return (
     <Link
       href={href}
@@ -96,11 +100,11 @@ function SidebarLink({ href, label, icon, exact, badge, collapsed }: {
   );
 }
 
-function MobileLink({ href, label, exact, badge }: {
-  href: string; label: string; exact?: boolean; badge?: number;
+function MobileLink({ href, label, exact, badge, activePrefix }: {
+  href: string; label: string; exact?: boolean; badge?: number; activePrefix?: string;
 }) {
   const pathname = usePathname();
-  const active = exact ? pathname === href : pathname.startsWith(href);
+  const active = exact ? pathname === href : pathname.startsWith(activePrefix ?? href);
   return (
     <Link href={href}
       className={`relative shrink-0 text-sm font-medium transition-colors whitespace-nowrap pb-1 ${
@@ -120,7 +124,6 @@ function MobileLink({ href, label, exact, badge }: {
 
 export default function PortalNav({ employeeName, role }: { employeeName: string; role: string }) {
   const [pendingTeamTimesheets, setPendingTeamTimesheets] = useState(0);
-  const [pendingTeamRequests,   setPendingTeamRequests]   = useState(0);
   const [collapsed, setCollapsed] = useState(false);
 
   const isManager = role === 'manager';
@@ -146,25 +149,19 @@ export default function PortalNav({ employeeName, role }: { employeeName: string
       supabase.from('employees').select('id').eq('user_id', user.id).single()
         .then(({ data: emp }) => {
           if (!emp) return;
-          Promise.all([
-            supabase.from('timesheet_entries')
-              .select('id', { count: 'exact', head: true })
-              .eq('status', 'submitted')
-              .neq('employee_id', emp.id),
-            supabase.from('hr_requests')
-              .select('id', { count: 'exact', head: true })
-              .eq('status', 'pending')
-              .neq('employee_id', emp.id),
-          ]).then(([{ count: tc }, { count: rc }]) => {
-            setPendingTeamTimesheets(tc ?? 0);
-            setPendingTeamRequests(rc ?? 0);
-          });
+          supabase.from('timesheet_entries')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'submitted')
+            .neq('employee_id', emp.id)
+            .then(({ count: tc }) => {
+              setPendingTeamTimesheets(tc ?? 0);
+            });
         });
     });
   }, [isManager]);
 
-  const teamBadge = (key: 'timesheets' | 'requests') =>
-    key === 'timesheets' ? pendingTeamTimesheets : pendingTeamRequests;
+  const teamBadge = (key: 'timesheets') =>
+    key === 'timesheets' ? pendingTeamTimesheets : 0;
 
   const initial = employeeName?.charAt(0)?.toUpperCase() ?? '?';
 

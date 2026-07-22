@@ -1,10 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-admin';
 import Link from 'next/link';
 
-const TYPE_LABEL: Record<string, string> = {
-  leave: 'Leave', expense: 'Expense', grievance: 'Grievance', asset: 'Asset',
-};
-
 function StatCard({
   label, value, sub, href, color,
 }: {
@@ -67,24 +63,16 @@ export default async function DashboardPage() {
   const [
     { count: empCount },
     { data: pendingEntries },
-    { count: pendingRequests },
     { count: activeJobs },
     { count: newContacts },
-    { data: recentRequests },
   ] = await Promise.all([
     admin.from('employees').select('id', { count: 'exact', head: true }).eq('is_active', true),
     admin.from('timesheet_entries')
       .select('employee_id, date, hours, employees!employee_id(full_name)')
       .eq('status', 'submitted')
       .order('date', { ascending: false }),
-    admin.from('hr_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     admin.from('career_positions').select('id', { count: 'exact', head: true }).eq('is_active', true),
     admin.from('contact_requests').select('id', { count: 'exact', head: true }).eq('status', 'new'),
-    admin.from('hr_requests')
-      .select('id, type, title, created_at, employees!employee_id(full_name)')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
-      .limit(6),
   ]);
 
   // ── Group submitted entries by (employee × week) ──────────────────────────
@@ -129,15 +117,6 @@ export default async function DashboardPage() {
 
   const pendingEmpCount = new Set(allGroups.map(g => g.empId)).size;
 
-  function relativeTime(iso: string) {
-    const diff = Date.now() - new Date(iso).getTime();
-    const days = Math.floor(diff / 86400000);
-    if (days === 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 7) return `${days}d ago`;
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
-
   return (
     <div className="space-y-7">
       {/* Header */}
@@ -149,7 +128,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard
           label="Active Employees"
           value={empCount ?? 0}
@@ -163,13 +142,6 @@ export default async function DashboardPage() {
           sub={pendingEmpCount === 1 ? 'employee awaiting review' : 'employees awaiting review'}
           href="/dashboard/timesheets"
           color="blue"
-        />
-        <StatCard
-          label="HR Requests"
-          value={pendingRequests ?? 0}
-          sub="Need action"
-          href="/dashboard/requests"
-          color="amber"
         />
         <StatCard
           label="Open Positions"
@@ -188,7 +160,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Recent activity */}
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid gap-4">
 
         {/* Submitted timesheets — by person, grouped by week */}
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
@@ -248,52 +220,6 @@ export default async function DashboardPage() {
             </Link>
           </div>
         </div>
-
-        {/* Recent requests */}
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between border-b border-gray-50">
-            <div>
-              <h2 className="text-sm font-bold text-gray-900">HR Requests</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Pending approval</p>
-            </div>
-            {(pendingRequests ?? 0) > 0 && (
-              <span className="text-xs font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
-                {pendingRequests}
-              </span>
-            )}
-          </div>
-
-          {!recentRequests?.length ? (
-            <div className="px-5 py-10 text-center text-xs text-gray-400">No pending requests</div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {recentRequests.map((r) => {
-                const emp = r.employees as unknown as { full_name: string } | null;
-                return (
-                  <div key={r.id} className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50/50 transition-colors">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900 truncate">{r.title}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{emp?.full_name ?? '—'}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="text-[10px] font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-                        {TYPE_LABEL[r.type] ?? r.type}
-                      </span>
-                      <p className="text-xs text-gray-400 mt-1">{relativeTime(r.created_at)}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="px-5 py-3 border-t border-gray-50">
-            <Link href="/dashboard/requests"
-              className="text-xs font-semibold text-amber-700 hover:text-amber-800 transition-colors">
-              Review all requests →
-            </Link>
-          </div>
-        </div>
       </div>
 
       {/* Quick actions */}
@@ -311,10 +237,6 @@ export default async function DashboardPage() {
           <Link href="/dashboard/timesheets"
             className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full hover:bg-gray-200 transition-colors">
             Review Timesheets
-          </Link>
-          <Link href="/dashboard/requests"
-            className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full hover:bg-gray-200 transition-colors">
-            Review Requests
           </Link>
           <Link href="/dashboard/contacts"
             className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full hover:bg-gray-200 transition-colors">

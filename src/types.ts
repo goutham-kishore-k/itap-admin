@@ -50,16 +50,74 @@ export interface LeaveType {
 export interface TimesheetEntry {
   id: string;
   employee_id: string;
+  timesheet_id: string | null;
   date: string;
   project: string;
+  project_id: string | null;
   hours: number;
   notes: string | null;
   rejection_reason: string | null;
   status: 'draft' | 'submitted' | 'approved' | 'rejected';
+  approval_id: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  submitted_at: string | null;
   created_at: string;
   employees?: { id: string; full_name: string } | null;
+}
+
+export interface TimesheetApproval {
+  id: string;
+  employee_id: string;
+  period_type: 'daily' | 'weekly' | 'monthly' | 'range';
+  period_start: string;
+  period_end: string;
+  total_hours: number;
+  entry_count: number;
+  status: 'approved' | 'reverted';
+  notes: string | null;
+  approved_by: string | null;
+  approved_at: string;
+  reverted_by: string | null;
+  reverted_at: string | null;
+  created_at: string;
+}
+
+export interface TimesheetAttachment {
+  id: string;
+  employee_id: string;
+  timesheet_id: string;
+  period_type: 'weekly' | 'monthly' | 'range';
+  period_start: string;
+  period_end: string;
+  file_name: string;
+  storage_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  notes: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface TimesheetPeriodTotal {
+  id: string;
+  employee_id: string;
+  period_type: 'weekly' | 'monthly' | 'range';
+  period_start: string;
+  period_end: string;
+  total_hours: number;
+  updated_at: string;
+}
+
+export interface Notification {
+  id: string;
+  employee_id: string;
+  type: 'timesheet_approved' | 'timesheet_rejected';
+  title: string;
+  body: string | null;
+  link: string | null;
+  read_at: string | null;
+  created_at: string;
 }
 
 export interface AttendanceRecord {

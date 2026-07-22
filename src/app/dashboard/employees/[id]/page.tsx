@@ -4,8 +4,13 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
-import type { Employee, Department } from '@/types';
+import type { Employee, Department, TimesheetEntry } from '@/types';
 import { updateEmployee, deleteEmployee } from '../actions';
+import {
+  getMonthStart, getMonthEnd, addMonths, fmt, displayDate,
+  dayStatus, monthGridCells, DAY_CELL_STYLE, DAY_DOT_STYLE, WEEKDAY_HEADERS,
+  type DayStatus,
+} from '@/lib/calendar-utils';
 
 export default function EditEmployeePage() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +23,12 @@ export default function EditEmployeePage() {
   const [showDelete, setShowDelete] = useState(false);
   const [confirmName, setConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  // Timesheet calendar (view-only)
+  const [calMonth, setCalMonth]     = useState(() => getMonthStart(new Date()));
+  const [calEntries, setCalEntries] = useState<TimesheetEntry[]>([]);
+  const [calLoading, setCalLoading] = useState(false);
+  const [hoverDate, setHoverDate]   = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -33,6 +44,21 @@ export default function EditEmployeePage() {
       setLoading(false);
     });
   }, [id, router]);
+
+  useEffect(() => {
+    if (!id) return;
+    setCalLoading(true);
+    const supabase = createClient();
+    supabase.from('timesheet_entries')
+      .select('*')
+      .eq('employee_id', id)
+      .gte('date', fmt(calMonth))
+      .lte('date', fmt(getMonthEnd(calMonth)))
+      .then(({ data }) => {
+        setCalEntries((data ?? []) as TimesheetEntry[]);
+        setCalLoading(false);
+      });
+  }, [id, calMonth]);
 
   async function handleDelete() {
     setDeleting(true);
@@ -69,6 +95,85 @@ export default function EditEmployeePage() {
         <span className="text-gray-700 font-medium">Edit</span>
       </div>
       <h1 className="text-xl font-bold text-gray-900 mb-6">{employee?.full_name}</h1>
+
+      {/* Timesheet calendar — view-only status per day */}
+      <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-gray-900">Timesheet Calendar</h2>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setCalMonth(m => getMonthStart(addMonths(m, -1)))}
+              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">← Prev</button>
+            <span className="text-sm font-medium text-gray-600 w-32 text-center">
+              {calMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </span>
+            <button onClick={() => setCalMonth(m => getMonthStart(addMonths(m, 1)))}
+              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">Next →</button>
+          </div>
+        </div>
+
+        {calLoading ? (
+          <div className="flex justify-center py-8">
+            <div className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+              {WEEKDAY_HEADERS.map(w => (
+                <div key={w} className="text-center text-[10px] font-semibold text-gray-400 uppercase tracking-wide py-1">{w}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1.5">
+              {monthGridCells(calMonth).map(cell => {
+                const cellStr     = fmt(cell);
+                const inMonth     = cellStr >= fmt(calMonth) && cellStr <= fmt(getMonthEnd(calMonth));
+                const cellEntries = inMonth ? calEntries.filter(e => e.date === cellStr) : [];
+                const cStatus     = dayStatus(cellEntries);
+                const isToday     = fmt(new Date()) === cellStr;
+                const cellHours   = cellEntries.reduce((s, e) => s + Number(e.hours), 0);
+                return (
+                  <div
+                    key={cellStr}
+                    onMouseEnter={() => inMonth && cellEntries.length > 0 && setHoverDate(cellStr)}
+                    onMouseLeave={() => setHoverDate(null)}
+                    className={`relative aspect-square rounded-lg border p-1.5 flex flex-col items-start ${
+                      !inMonth ? 'opacity-0 pointer-events-none' : DAY_CELL_STYLE[cStatus]
+                    }`}>
+                    <span className={`text-xs font-semibold ${isToday ? 'text-brand' : 'text-gray-600'}`}>
+                      {cell.getDate()}
+                    </span>
+                    {inMonth && cStatus !== 'empty' && (
+                      <span className="mt-auto flex items-center gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${DAY_DOT_STYLE[cStatus]}`} />
+                        <span className="text-[9px] text-gray-400">{cellHours}h</span>
+                      </span>
+                    )}
+                    {hoverDate === cellStr && (
+                      <div className="absolute z-10 bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-48 bg-white border border-gray-200 rounded-lg shadow-lg p-2 space-y-1">
+                        <p className="text-[10px] font-semibold text-gray-500">{displayDate(cell)}</p>
+                        {cellEntries.map(e => (
+                          <div key={e.id} className="flex items-center justify-between text-[11px] gap-2">
+                            <span className="text-gray-700 truncate">{e.project}</span>
+                            <span className="text-gray-400 shrink-0 capitalize">{e.status}</span>
+                            <span className="text-gray-700 font-medium shrink-0">{e.hours}h</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-50 flex-wrap">
+              {(['empty', 'draft', 'submitted', 'approved', 'rejected'] as DayStatus[]).map(s => (
+                <span key={s} className="flex items-center gap-1.5 text-[10px] text-gray-400 capitalize">
+                  <span className={`w-1.5 h-1.5 rounded-full ${DAY_DOT_STYLE[s]}`} />
+                  {s === 'empty' ? 'No entry' : s}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
 
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
 
